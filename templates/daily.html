@@ -23,8 +23,33 @@
     .back{display:inline-block;margin:22px 0 45px;color:#a78bfa;text-decoration:none;font-size:13px;font-weight:700}.back:hover{color:#fff}
     @media(max-width:650px){nav{height:auto;padding:18px 0;align-items:flex-start}.navlinks{gap:10px;flex-wrap:wrap;justify-content:flex-end}.navlinks a:nth-child(n+3){display:none}.card{padding:34px 20px}}
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
 <body>
+<aside class="sidebar">
+    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+    <nav>
+      <a href="/dashboard"><span>⌂</span> Overview</a>
+      <a href="#"><span>🍬</span> Economy</a>
+      <a href="/shop"><span>🛒</span> Shop</a>
+      <a href="#"><span>🎒</span> Inventory</a>
+      <a href="#"><span>👥</span> Users</a>
+      <a href="/leaderboard"><span>🏆</span> Leaderboard</a>
+      <a class="active" href="/daily"><span>🎁</span> Daily Reward</a>
+      <a href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+      <a href="/statistics"><span>📊</span> Statistics</a>
+      <a href="/announcements"><span>📢</span> Announcements</a>
+      <a href="/rewards"><span>🎁</span> Rewards</a>
+      <a href="#"><span>📋</span> Logging</a>
+      <a href="/status"><span>📡</span> Status</a>
+      <a href="/events"><span>🎃</span> Events</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <a href="/profile"><span>👤</span> Profile</a>
+      <a href="#"><span>⚙️</span> Settings</a>
+      <div class="profile-mini"><div class="avatar">A</div><div><strong>Server Admin</strong><span>Dashboard</span></div><span class="dots">•••</span></div>
+    </div>
+  </aside>
 <main>
   <nav>
     <a href="/dashboard" class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Event</span></div></a>
