@@ -1,0 +1,19 @@
+.banner{display:flex;align-items:center;gap:16px;padding:22px 26px;border-radius:16px;border:1px solid var(--border);margin-bottom:18px}
+.banner .dot{width:14px;height:14px;border-radius:50%;flex:none}
+.banner h2{margin:0 0 4px;font-size:20px}.banner p{margin:0;color:var(--muted);font-size:12px}
+.banner.ok{background:linear-gradient(120deg,#10281a,#131b17);border-color:#285b3b}.banner.ok .dot{background:#22c55e;box-shadow:0 0 14px #22c55e}
+.banner.warn{background:linear-gradient(120deg,#2d2310,#1c1812);border-color:#6b5217}.banner.warn .dot{background:#f59e0b;box-shadow:0 0 14px #f59e0b}
+.banner.down{background:linear-gradient(120deg,#2d1414,#1c1212);border-color:#6b2a2a}.banner.down .dot{background:#ef4444;box-shadow:0 0 14px #ef4444}
+.services{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+.service{background:rgba(18,18,28,.9);border:1px solid var(--border);border-radius:14px;padding:20px}
+.service-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.service-head h3{margin:0;font-size:14px}
+.badge{font-size:10px;padding:5px 9px;border-radius:99px;font-weight:600}
+.badge.ok{color:#86efac;background:#163523}.badge.warn{color:#fcd34d;background:#3a2c0c}.badge.down{color:#fca5a5;background:#3b1717}
+.kv{display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding:11px 0;font-size:11px}
+.kv:last-child{border:0}.kv span{color:var(--muted)}.kv strong{color:#ddd;text-align:right;max-width:60%;word-break:break-word}
+.notice{border:1px solid #6b5217;background:#1d1810;border-radius:14px;padding:20px 22px;margin-bottom:18px}
+.notice h3{margin:0 0 8px;font-size:14px;color:#fcd34d}.notice p{margin:0 0 8px;font-size:12px;color:#c9c0a8;line-height:1.6}.notice p:last-child{margin:0}
+.notice.err{border-color:#6b2a2a;background:#1d1212}.notice.err h3{color:#fca5a5}.notice.err p{color:#d1b4b4}
+.refresh{color:#555568;font-size:10px;text-align:center;padding-top:8px}
+@media(max-width:900px){.services{grid-template-columns:1fr}}
