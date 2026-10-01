@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="refresh" content="15">
+  <title>Aurelois • Status</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='status.css') }}">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+    <nav>
+      <a href="/dashboard"><span>⌂</span> Overview</a>
+      <a class="active" href="/status"><span>📡</span> Status</a>
+      <a href="/"><span>🏠</span> Home</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">HALLOWEEN • SERVICE HEALTH</div>
+        <h1>Status</h1>
+        <p>Live health of the bot, database and web service.</p>
+      </div>
+    </header>
+
+    <section class="banner {{ s.overall }}">
+      <div class="dot"></div>
+      <div><h2>{{ s.overall_label }}</h2><p>Last checked {{ s.checked_at }} • Service uptime {{ s.uptime }}</p></div>
+    </section>
+
+    {% set d = s.discord %}
+    {% if d.state == 'rate_limited' %}
+    <section class="notice">
+      <h3>⏳ Discord is rate limiting the bot's login</h3>
+      <p>{{ d.rate_limit.label if d.rate_limit else 'Discord returned HTTP 429.' }}.
+         {% if d.retry_in is not none %}Next automatic retry in about <strong>{{ d.retry_in }}s</strong>.{% endif %}</p>
+      {% if d.rate_limit and d.rate_limit.kind == 'ip_block' %}
+      <p>This usually clears by itself. Avoid redeploying repeatedly, since each restart is another login attempt from the same IP.</p>
+      {% endif %}
+    </section>
+    {% elif d.state == 'error' %}
+    <section class="notice err">
+      <h3>⚠️ The bot is stopped</h3>
+      <p>Reason: {{ d.last_error or 'Unknown error' }}. Check the Render logs, fix the cause and redeploy.</p>
+    </section>
+    {% endif %}
+
+    <section class="services">
+      <div class="service">
+        <div class="service-head"><h3>🤖 Discord bot</h3>
+          <span class="badge {{ 'ok' if d.ok else ('warn' if d.state in ('connecting','starting','reconnecting','rate_limited') else 'down') }}">{{ d.state|replace('_',' ')|capitalize }}</span></div>
+        <div class="kv"><span>Logged in as</span><strong>{{ d.user or '—' }}</strong></div>
+        <div class="kv"><span>Latency</span><strong>{{ (d.latency_ms ~ ' ms') if d.latency_ms is not none else '—' }}</strong></div>
+        <div class="kv"><span>Servers</span><strong>{{ d.guilds if d.guilds is not none else '—' }}</strong></div>
+        <div class="kv"><span>Connected since</span><strong>{{ d.connected_at or '—' }}</strong></div>
+        <div class="kv"><span>Login attempts</span><strong>{{ d.attempts }}</strong></div>
+        <div class="kv"><span>Last attempt</span><strong>{{ d.last_attempt or '—' }}</strong></div>
+      </div>
+
+      <div class="service">
+        <div class="service-head"><h3>🗄️ Database</h3>
+          <span class="badge {{ 'ok' if s.database.ok else 'down' }}">{{ 'Connected' if s.database.ok else 'Unavailable' }}</span></div>
+        <div class="kv"><span>Provider</span><strong>MongoDB Atlas</strong></div>
+        <div class="kv"><span>Ping</span><strong>{{ (s.database.latency_ms ~ ' ms') if s.database.latency_ms is not none else '—' }}</strong></div>
+        <div class="kv"><span>Error</span><strong>{{ s.database.error or 'None' }}</strong></div>
+      </div>
+
+      <div class="service">
+        <div class="service-head"><h3>🌐 Web service</h3><span class="badge ok">Running</span></div>
+        <div class="kv"><span>Dashboard</span><strong><a href="/dashboard" style="color:#a78bfa;text-decoration:none">/dashboard</a></strong></div>
+        <div class="kv"><span>Health check</span><strong><a href="/health" style="color:#a78bfa;text-decoration:none">/health</a></strong></div>
+        <div class="kv"><span>JSON status</span><strong><a href="/status.json" style="color:#a78bfa;text-decoration:none">/status.json</a></strong></div>
+      </div>
+    </section>
+
+    <div class="refresh">This page refreshes automatically every 15 seconds.</div>
+    <footer>🎃 Aurelois Halloween Bot <span>•</span> Status</footer>
+  </main>
+</body>
+</html>
