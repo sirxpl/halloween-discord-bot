@@ -1,6 +1,7 @@
 import os
 import random
 import threading
+import asyncio
 from datetime import datetime, timezone, timedelta
 
 import discord
@@ -118,7 +119,6 @@ class HalloweenBot(commands.Cog):
 
         ensure_user(guild_id, user_id)
 
-        # Atomic cooldown check: only one daily claim can succeed per 24 hours.
         cutoff = now - timedelta(hours=24)
         updated = users.find_one_and_update(
             {
@@ -166,7 +166,6 @@ class HalloweenBot(commands.Cog):
         now = now_utc()
         ensure_user(guild_id, user_id)
 
-        # A simple 1-hour cooldown for the first version.
         cutoff = now - timedelta(hours=1)
         reward = random.randint(25, 150)
 
@@ -201,8 +200,12 @@ class HalloweenBot(commands.Cog):
         )
 
     @app_commands.command(name="give", description="Give Candy to another member.")
-    @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
-    async def give(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    @app_commands.describe(
+        member="The member receiving Candy.", amount="Amount of Candy to give."
+    )
+    async def give(
+        self, interaction: discord.Interaction, member: discord.Member, amount: int
+    ):
         if not interaction.guild:
             await interaction.response.send_message(
                 "🍬 This command can only be used in a server.", ephemeral=True
@@ -229,7 +232,6 @@ class HalloweenBot(commands.Cog):
 
         sender = ensure_user(interaction.guild.id, interaction.user.id)
 
-        # Atomic debit prevents negative balances.
         debited = users.find_one_and_update(
             {
                 "guild_id": interaction.guild.id,
@@ -254,7 +256,9 @@ class HalloweenBot(commands.Cog):
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
         )
 
-    @app_commands.command(name="leaderboard", description="Show the server Candy leaderboard.")
+    @app_commands.command(
+        name="leaderboard", description="Show the server Candy leaderboard."
+    )
     async def leaderboard(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
@@ -327,8 +331,9 @@ async def main():
 
     while True:
         try:
-            async with bot:
-                await bot.start(DISCORD_TOKEN)
+            # Create a fresh Discord client/session for every login attempt.
+            # This avoids reusing a closed aiohttp session after a 429.
+            await bot.start(DISCORD_TOKEN)
             return
         except discord.HTTPException as exc:
             if exc.status != 429:
@@ -338,15 +343,16 @@ async def main():
                 f"Discord returned HTTP 429 during login. "
                 f"Waiting {retry_delay}s before retrying."
             )
+            await bot.close()
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 300)
         except discord.LoginFailure:
+            raise
+        except Exception:
+            await bot.close()
             raise
 
 
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
-
-    import asyncio
-
     asyncio.run(main())
