@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import random
 import threading
@@ -48,17 +49,41 @@ def dashboard():
             (doc.get("balance", 0) or 0)
             for doc in users.find({}, {"balance": 1})
         )
-        status = "Online"
+        db_status = "Connected"
     except PyMongoError:
         log.exception("Dashboard could not reach MongoDB")
-        total_users, total_candy, status = 0, 0, "Database unavailable"
+        total_users, total_candy, db_status = 0, 0, "Unavailable"
+
+    d = STATE["discord"]
+    labels = {
+        "online": "Online",
+        "starting": "Starting",
+        "connecting": "Connecting",
+        "reconnecting": "Reconnecting",
+        "rate_limited": "Rate limited",
+        "error": "Offline",
+    }
+    discord_status = labels.get(d["state"], "Unknown")
     return render_template(
         "dashboard.html",
         total_users=total_users,
         total_candy=total_candy,
         command_count=6,
-        bot_status=status,
+        bot_status=discord_status if d["state"] != "online" else "Online",
+        discord_status=discord_status,
+        db_status=db_status,
+        discord_ok=d["state"] == "online",
     )
+
+
+@app.get("/status")
+def status_page():
+    return render_template("status.html", s=build_status())
+
+
+@app.get("/status.json")
+def status_json():
+    return jsonify(build_status())
 
 
 @app.get("/health")
@@ -81,6 +106,133 @@ async def db(fn, *args, **kwargs):
 
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+# ---------- live status tracking (feeds /status and /dashboard) ----------
+STATE = {
+    "started_at": now_utc(),
+    "discord": {
+        "state": "starting",  # starting | connecting | online | reconnecting | rate_limited | error
+        "attempts": 0,
+        "last_attempt": None,
+        "connected_at": None,
+        "user": None,
+        "last_error": None,
+        "retry_until": None,
+        "rate_limit": None,
+    },
+}
+BOT = {"instance": None}
+
+
+def fmt_dt(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S UTC") if dt else None
+
+
+def fmt_duration(seconds):
+    seconds = int(max(seconds, 0))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def describe_rate_limit(exc: discord.HTTPException):
+    """Work out whether a 429 is a normal Discord rate limit or a Cloudflare/IP block."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    body = str(getattr(exc, "text", "") or "")
+    body_l = body.lower()
+    wanted = [
+        "Retry-After", "X-RateLimit-Global", "X-RateLimit-Scope", "X-RateLimit-Limit",
+        "X-RateLimit-Remaining", "X-RateLimit-Reset-After", "Via", "Server", "CF-RAY",
+    ]
+    picked = {k: headers.get(k) for k in wanted if headers.get(k) is not None}
+
+    if "<html" in body_l or "<!doctype" in body_l or "1015" in body_l or "cloudflare" in body_l:
+        kind = "ip_block"
+        label = "Blocked at Cloudflare (this host's IP is being throttled)"
+    elif "retry_after" in body_l or "rate limited" in body_l:
+        kind = "api_limit"
+        label = "Normal Discord API rate limit"
+    else:
+        kind = "unknown"
+        label = "Unrecognised 429 response"
+
+    retry_after = None
+    try:
+        retry_after = float(headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        pass
+    return {"kind": kind, "label": label, "retry_after": retry_after, "headers": picked, "body": body[:200]}
+
+
+def build_status():
+    d = STATE["discord"]
+    bot = BOT["instance"]
+    now = now_utc()
+
+    latency_ms, guilds = None, None
+    if bot is not None and d["state"] == "online" and not bot.is_closed():
+        lat = bot.latency
+        if lat == lat and lat != float("inf"):
+            latency_ms = round(lat * 1000)
+        guilds = len(bot.guilds)
+
+    db_ok, db_ms, db_error = False, None, None
+    started = time.perf_counter()
+    try:
+        mongo.admin.command("ping")
+        db_ok = True
+        db_ms = round((time.perf_counter() - started) * 1000)
+    except PyMongoError as exc:
+        db_error = exc.__class__.__name__
+
+    retry_in = None
+    if d["retry_until"] and d["retry_until"] > now:
+        retry_in = int((d["retry_until"] - now).total_seconds())
+
+    discord_ok = d["state"] == "online"
+    if discord_ok and db_ok:
+        overall, overall_label = "ok", "All systems operational"
+    elif discord_ok or db_ok:
+        overall, overall_label = "warn", "Partial outage"
+    else:
+        overall, overall_label = "down", "Major outage"
+
+    rl = d["rate_limit"]
+    return {
+        "overall": overall,
+        "overall_label": overall_label,
+        "uptime": fmt_duration((now - STATE["started_at"]).total_seconds()),
+        "checked_at": fmt_dt(now),
+        "discord": {
+            "state": d["state"],
+            "ok": discord_ok,
+            "user": d["user"],
+            "latency_ms": latency_ms,
+            "guilds": guilds,
+            "attempts": d["attempts"],
+            "last_attempt": fmt_dt(d["last_attempt"]),
+            "connected_at": fmt_dt(d["connected_at"]),
+            "last_error": d["last_error"],
+            "retry_in": retry_in,
+            "rate_limit": None if not rl else {
+                "kind": rl["kind"],
+                "label": rl["label"],
+                "retry_after": rl["retry_after"],
+                "at": fmt_dt(rl["at"]),
+            },
+        },
+        "database": {"ok": db_ok, "latency_ms": db_ms, "error": db_error},
+        "web": {"ok": True},
+    }
 
 
 def get_user(guild_id: int, user_id: int):
@@ -282,7 +434,19 @@ async def setup_bot(bot):
             pass
 
     @bot.event
+    async def on_disconnect():
+        if STATE["discord"]["state"] == "online":
+            STATE["discord"]["state"] = "reconnecting"
+
+    @bot.event
+    async def on_resumed():
+        STATE["discord"]["state"] = "online"
+
+    @bot.event
     async def on_ready():
+        d = STATE["discord"]
+        d.update(state="online", user=str(bot.user), connected_at=now_utc(),
+                 last_error=None, retry_until=None)
         log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
         log.info(f"Connected to {len(bot.guilds)} guild(s).")
         if not getattr(bot, "_commands_synced", False):
@@ -302,32 +466,62 @@ async def check_database():
         )
 
 
+async def park_forever(reason: str):
+    """Keep the web server (and /status) alive instead of crash-looping and re-hitting Discord."""
+    log.error("%s Bot is stopped; /status stays up. Fix the cause and redeploy.", reason)
+    await asyncio.Event().wait()
+
+
 async def main():
     await check_database()
+    d = STATE["discord"]
     retry_delay = 30
     while True:
         bot = create_bot()
+        BOT["instance"] = bot
         await setup_bot(bot)
+        d["attempts"] += 1
+        d["last_attempt"] = now_utc()
+        d["state"] = "connecting"
+        d["retry_until"] = None
         try:
             await bot.start(DISCORD_TOKEN)
             return
         except discord.HTTPException as exc:
-            if exc.status != 429:
-                await bot.close()
-                raise
-            log.warning(
-                "Discord returned HTTP 429 during login. "
-                "Waiting %ss before creating a fresh bot and retrying.", retry_delay
-            )
             await bot.close()
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 300)
+            if exc.status != 429:
+                d.update(state="error", last_error=f"Discord HTTP {exc.status}")
+                await park_forever(f"Discord returned HTTP {exc.status} during login ({exc.text[:200]!r}).")
+            info = describe_rate_limit(exc)
+            wait = retry_delay
+            if info["retry_after"]:
+                wait = max(wait, min(info["retry_after"] + 5, 3600))
+            log.warning(
+                "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
+                info["label"], getattr(exc, "code", None), info["headers"], info["body"],
+            )
+            log.warning("Waiting %ss before retry #%s.", int(wait), d["attempts"] + 1)
+            d.update(
+                state="rate_limited",
+                rate_limit={**info, "at": now_utc()},
+                last_error=info["label"],
+                retry_until=now_utc() + timedelta(seconds=wait),
+            )
+            await asyncio.sleep(wait)
+            retry_delay = min(retry_delay * 2, 600)
         except discord.LoginFailure:
             await bot.close()
-            raise
-        except Exception:
+            d.update(state="error", last_error="Invalid Discord token")
+            await park_forever("Discord rejected DISCORD_TOKEN (invalid token).")
+        except discord.PrivilegedIntentsRequired:
             await bot.close()
-            raise
+            d.update(state="error", last_error="Privileged intents not enabled")
+            await park_forever("A privileged intent is required but not enabled in the Developer Portal.")
+        except Exception as exc:
+            await bot.close()
+            d.update(state="error", last_error=exc.__class__.__name__)
+            log.exception("Unexpected error while running the bot")
+            await park_forever("Unexpected error.")
 
 
 if __name__ == "__main__":
