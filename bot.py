@@ -9,10 +9,13 @@ from datetime import datetime, timezone, timedelta
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request, redirect, session, url_for
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
+from urllib.parse import urlencode
+import secrets
+import requests
 
 load_dotenv()
 
@@ -22,11 +25,17 @@ log = logging.getLogger("halloween-bot")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
 PORT = int(os.getenv("PORT", "10000"))
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+OAUTH2_REDIRECT_URI = os.getenv("OAUTH2_REDIRECT_URI")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN is not configured.")
 if not MONGODB_URI:
     raise RuntimeError("MONGODB_URI is not configured.")
+if not FLASK_SECRET_KEY:
+    raise RuntimeError("FLASK_SECRET_KEY is not configured.")
 
 mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
 db = mongo["halloween_bot"]
@@ -41,6 +50,10 @@ SHOP_ITEMS = [
 ]
 
 app = Flask(__name__)
+app.secret_key = FLASK_SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
 
 
 @app.get("/")
@@ -107,9 +120,116 @@ def events_page():
     return render_template("events.html")
 
 
+@app.get("/login")
+def login():
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not OAUTH2_REDIRECT_URI:
+        return "Discord OAuth2 is not configured on this deployment.", 503
+    state = secrets.token_urlsafe(32)
+    session["oauth_state"] = state
+    params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI, "response_type": "code", "scope": "identify guilds", "state": state}
+    return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
+
+
+@app.get("/oauth/callback")
+def oauth_callback():
+    if request.args.get("error"):
+        return redirect(url_for("profile_page"))
+    state = request.args.get("state")
+    expected = session.pop("oauth_state", None)
+    if not state or not expected or not secrets.compare_digest(state, expected):
+        return "Invalid OAuth2 state.", 400
+    code = request.args.get("code")
+    if not code:
+        return "Missing OAuth2 authorization code.", 400
+    token = requests.post("https://discord.com/api/oauth2/token", data={"client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": OAUTH2_REDIRECT_URI}, timeout=10)
+    if not token.ok:
+        log.error("Discord OAuth2 token exchange failed: %s %s", token.status_code, token.text[:300])
+        return "Discord OAuth2 sign-in failed.", 502
+    access_token = token.json().get("access_token")
+    if not access_token:
+        return "Discord OAuth2 did not return an access token.", 502
+    headers = {"Authorization": f"Bearer {access_token}"}
+    me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
+    guild_response = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=10)
+    if not me_response.ok or not guild_response.ok:
+        return "Discord account information could not be loaded.", 502
+    me = me_response.json()
+    guilds = guild_response.json()
+    manageable = [g for g in guilds if (int(g.get("permissions", 0)) & 0x8) or (int(g.get("permissions", 0)) & 0x20)]
+    session["discord_user"] = me
+    session["discord_guilds"] = manageable
+    if manageable:
+        session["selected_guild_id"] = str(manageable[0]["id"])
+    return redirect(url_for("profile_page"))
+
+
+@app.get("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("home"))
+
+
+def discord_avatar_url(user):
+    if not user or not user.get("avatar"):
+        return None
+    return f"https://cdn.discordapp.com/avatars/{user["id"]}/{user["avatar"]}.png?size=256"
+
+
+def selected_guild():
+    guilds = session.get("discord_guilds", [])
+    wanted = str(request.args.get("guild") or session.get("selected_guild_id") or "")
+    guild = next((g for g in guilds if str(g.get("id")) == wanted), None)
+    if guild:
+        session["selected_guild_id"] = str(guild["id"])
+        return guild
+    if guilds:
+        session["selected_guild_id"] = str(guilds[0]["id"])
+        return guilds[0]
+    return None
+
+
+def get_guild_settings(guild_id):
+    defaults = {"event_enabled": True, "daily_reward": 100, "trick_or_treat_min": 25, "trick_or_treat_max": 150}
+    stored = settings.find_one({"guild_id": guild_id}) or {}
+    defaults.update({k: stored[k] for k in defaults if k in stored})
+    return defaults
+
+
 @app.get("/profile")
 def profile_page():
-    return render_template("profile.html")
+    user = session.get("discord_user")
+    if not user:
+        return render_template("profile.html", logged_in=False, user=None, avatar_url=None)
+    guild = selected_guild()
+    profile = None
+    rank = None
+    if guild:
+        guild_id = int(guild["id"])
+        profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+        if profile:
+            rank = users.count_documents({"guild_id": guild_id, "balance": {"$gt": profile.get("balance", 0)}}) + 1
+    return render_template("profile.html", logged_in=True, user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, profile=profile, rank=rank)
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings_page():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild = selected_guild()
+    if not guild:
+        return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=[], guild=None, config=None, error="You need Manage Server or Administrator permission in a Discord server to configure it.")
+    guild_id = int(guild["id"])
+    if request.method == "POST":
+        try:
+            daily_reward = max(0, min(int(request.form.get("daily_reward", 100)), 100000))
+            minimum = max(1, min(int(request.form.get("trick_or_treat_min", 25)), 100000))
+            maximum = max(minimum, min(int(request.form.get("trick_or_treat_max", 150)), 100000))
+        except (TypeError, ValueError):
+            return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=get_guild_settings(guild_id), error="Please enter valid numeric settings.")
+        config = {"event_enabled": request.form.get("event_enabled") == "on", "daily_reward": daily_reward, "trick_or_treat_min": minimum, "trick_or_treat_max": maximum, "updated_at": now_utc(), "updated_by": int(user["id"])}
+        settings.update_one({"guild_id": guild_id}, {"$set": config, "$setOnInsert": {"guild_id": guild_id}}, upsert=True)
+    return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=get_guild_settings(guild_id), saved=request.method == "POST")
 
 
 @app.get("/statistics")
@@ -406,12 +526,13 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
+        config = await db(get_guild_settings, guild_id)
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
              "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
-            {"$set": {"last_daily": now}, "$inc": {"balance": 100}},
+            {"$set": {"last_daily": now}, "$inc": {"balance": config["daily_reward"]}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
@@ -421,7 +542,7 @@ class HalloweenBot(commands.Cog):
                 f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await interaction.response.send_message("🎃 You claimed your daily reward: **+100 🍬 Candy**!")
+        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
@@ -432,8 +553,9 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
+        config = await db(get_guild_settings, guild_id)
         cutoff = now - timedelta(hours=1)
-        reward = random.randint(25, 150)
+        reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
         updated = await db(
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
