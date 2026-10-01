@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#09070d;color:#f8f4ff;font-family:Inter,system-ui,sans-serif;overflow-x:hidden}
+body:before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 50% 20%,rgba(113,55,180,.22),transparent 42%),radial-gradient(circle at 15% 80%,rgba(255,122,26,.10),transparent 32%);pointer-events:none}
+main{width:min(1120px,calc(100% - 40px));margin:auto;position:relative;z-index:1}
+nav{height:86px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:12px}.brand>span{font-size:30px}.brand strong{display:block;font-size:18px}.brand small{display:block;color:#958da4;font-size:11px;margin-top:3px}
+.nav-link{color:#cfc8da;text-decoration:none;font-size:14px;font-weight:600}.nav-link:hover{color:#fff}
+.hero{text-align:center;padding:92px 0 70px}.badge{display:inline-block;padding:9px 14px;border:1px solid #3b294b;border-radius:999px;background:#15101b;color:#d9baf3;font-size:11px;font-weight:700;letter-spacing:.12em}
+h1{font-size:clamp(48px,8vw,86px);line-height:.98;letter-spacing:-.055em;margin:25px 0 22px}
+h1 span{background:linear-gradient(90deg,#b67cff,#ff9b3d);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero>p{max-width:650px;margin:0 auto;color:#a9a1b5;font-size:17px;line-height:1.7}
+.actions{display:flex;justify-content:center;gap:12px;margin:34px 0 72px;flex-wrap:wrap}
+.actions a{padding:13px 20px;border-radius:12px;text-decoration:none;font-weight:700;font-size:14px}
+.primary{background:linear-gradient(135deg,#8c4fe8,#c46cff);color:#fff;box-shadow:0 12px 35px rgba(130,65,220,.24)}
+.secondary{border:1px solid #342a3e;background:#110e16;color:#ded7e8}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;text-align:left}
+.cards>div{background:rgba(18,14,24,.9);border:1px solid #292130;border-radius:18px;padding:23px}
+.cards b{font-size:25px;display:block;margin-bottom:18px}.cards strong{display:block;font-size:15px;margin-bottom:8px}.cards span{display:block;color:#91899c;font-size:13px;line-height:1.55}
+footer{text-align:center;color:#655e6e;font-size:12px;padding:24px 0 38px}footer span{padding:0 8px}
+@media(max-width:700px){main{width:min(100% - 26px,560px)}nav{height:72px}.nav-link{display:none}.hero{padding:65px 0 48px}.hero>p{font-size:15px}.cards{grid-template-columns:1fr}.actions{margin-bottom:50px}}
