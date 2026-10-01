@@ -22,19 +22,17 @@ if not DISCORD_TOKEN:
 if not MONGODB_URI:
     raise RuntimeError("MONGODB_URI is not configured.")
 
-# MongoDB
 mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=10000)
 db = mongo["halloween_bot"]
 users = db["users"]
 settings = db["settings"]
 
-# Health endpoint for Render's web service.
 app = Flask(__name__)
 
 
 @app.get("/")
-def health():
-    return jsonify({"status": "online", "service": "halloween-discord-bot"})
+def home():
+    return render_template("home.html")
 
 
 @app.get("/dashboard")
@@ -114,11 +112,8 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         user = ensure_user(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
             f"🍬 **{interaction.user.display_name}** has **{user['balance']:,} Candy**."
@@ -127,171 +122,106 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="daily", description="Claim your daily Candy reward.")
     async def daily(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
         ensure_user(guild_id, user_id)
-
         cutoff = now - timedelta(hours=24)
         updated = users.find_one_and_update(
-            {
-                "guild_id": guild_id,
-                "user_id": user_id,
-                "$or": [
-                    {"last_daily": {"$exists": False}},
-                    {"last_daily": {"$lte": cutoff}},
-                ],
-            },
+            {"guild_id": guild_id, "user_id": user_id,
+             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
             {"$set": {"last_daily": now}, "$inc": {"balance": 100}},
             return_document=ReturnDocument.AFTER,
         )
-
         if not updated:
             user = get_user(guild_id, user_id)
-            next_claim = user["last_daily"] + timedelta(hours=24)
-            timestamp = int(next_claim.timestamp())
+            timestamp = int((user["last_daily"] + timedelta(hours=24)).timestamp())
             await interaction.response.send_message(
-                f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.",
-                ephemeral=True,
+                f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
+        await interaction.response.send_message("🎃 You claimed your daily reward: **+100 🍬 Candy**!")
 
-        await interaction.response.send_message(
-            "🎃 You claimed your daily reward: **+100 🍬 Candy**!"
-        )
-
-    @app_commands.command(
-        name="trickortreat",
-        description="Go trick-or-treating for a random Candy reward.",
-    )
+    @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
         ensure_user(guild_id, user_id)
-
         cutoff = now - timedelta(hours=1)
         reward = random.randint(25, 150)
         updated = users.find_one_and_update(
-            {
-                "guild_id": guild_id,
-                "user_id": user_id,
-                "$or": [
-                    {"last_trick_or_treat": {"$exists": False}},
-                    {"last_trick_or_treat": {"$lte": cutoff}},
-                ],
-            },
+            {"guild_id": guild_id, "user_id": user_id,
+             "$or": [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": cutoff}}]},
             {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
-
         if not updated:
             user = get_user(guild_id, user_id)
-            next_claim = user["last_trick_or_treat"] + timedelta(hours=1)
-            timestamp = int(next_claim.timestamp())
+            timestamp = int((user["last_trick_or_treat"] + timedelta(hours=1)).timestamp())
             await interaction.response.send_message(
                 f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-
-        await interaction.response.send_message(
-            f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!"
-        )
+        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
 
     @app_commands.command(name="give", description="Give Candy to another member.")
-    @app_commands.describe(
-        member="The member receiving Candy.", amount="Amount of Candy to give."
-    )
-    async def give(
-        self, interaction: discord.Interaction, member: discord.Member, amount: int
-    ):
+    @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
+    async def give(self, interaction: discord.Interaction, member: discord.Member, amount: int):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         if member.bot:
-            await interaction.response.send_message(
-                "🤖 You can't give Candy to a bot.", ephemeral=True
-            )
+            await interaction.response.send_message("🤖 You can't give Candy to a bot.", ephemeral=True)
             return
-
         if member.id == interaction.user.id:
-            await interaction.response.send_message(
-                "🍬 You can't give Candy to yourself.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)
             return
-
         if amount <= 0:
-            await interaction.response.send_message(
-                "❌ The amount must be greater than 0.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
             return
-
         sender = ensure_user(interaction.guild.id, interaction.user.id)
         debited = users.find_one_and_update(
-            {
-                "guild_id": interaction.guild.id,
-                "user_id": interaction.user.id,
-                "balance": {"$gte": amount},
-            },
+            {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "balance": {"$gte": amount}},
             {"$inc": {"balance": -amount}},
             return_document=ReturnDocument.AFTER,
         )
-
         if not debited:
             await interaction.response.send_message(
                 f"❌ You don't have enough Candy. You currently have **{sender['balance']:,} 🍬**.",
                 ephemeral=True,
             )
             return
-
         ensure_user(interaction.guild.id, member.id)
         add_candy(interaction.guild.id, member.id, amount)
         await interaction.response.send_message(
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
         )
 
-    @app_commands.command(
-        name="leaderboard", description="Show the server Candy leaderboard."
-    )
+    @app_commands.command(name="leaderboard", description="Show the server Candy leaderboard.")
     async def leaderboard(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         top_users = list(
             users.find({"guild_id": interaction.guild.id}).sort("balance", -1).limit(10)
         )
         if not top_users:
-            await interaction.response.send_message(
-                "🍬 Nobody has earned Candy yet!"
-            )
+            await interaction.response.send_message("🍬 Nobody has earned Candy yet!")
             return
-
         lines = []
         for index, user in enumerate(top_users, start=1):
             member = interaction.guild.get_member(user["user_id"])
             name = member.display_name if member else f"User {user['user_id']}"
             lines.append(f"**{index}.** {name} — **{user['balance']:,} 🍬**")
-
         embed = discord.Embed(
             title="🍬 Candy Leaderboard",
-            description="\\n".join(lines),
+            description="\n".join(lines),
             color=discord.Color.orange(),
         )
         await interaction.response.send_message(embed=embed)
@@ -299,11 +229,8 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="profile", description="View your Candy profile.")
     async def profile(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(
-                "🍬 This command can only be used in a server.", ephemeral=True
-            )
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-
         user = ensure_user(interaction.guild.id, interaction.user.id)
         inventory = user.get("inventory", [])
         embed = discord.Embed(
@@ -330,11 +257,9 @@ async def setup_bot(bot):
 
 async def main():
     retry_delay = 30
-
     while True:
         bot = create_bot()
         await setup_bot(bot)
-
         try:
             await bot.start(DISCORD_TOKEN)
             return
@@ -342,7 +267,6 @@ async def main():
             if exc.status != 429:
                 await bot.close()
                 raise
-
             print(
                 f"Discord returned HTTP 429 during login. "
                 f"Waiting {retry_delay}s before creating a fresh bot and retrying."
