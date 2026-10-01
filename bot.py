@@ -172,7 +172,7 @@ def logout():
 def discord_avatar_url(user):
     if not user or not user.get("avatar"):
         return None
-    return f"https://cdn.discordapp.com/avatars/{user["id"]}/{user["avatar"]}.png?size=256"
+    return f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png?size=256"
 
 
 def selected_guild():
