@@ -80,6 +80,11 @@ def dashboard():
 def halloween_quests_page():
     return render_template("halloween_quests.html")
 
+@app.get("/announcements")
+def announcements_page():
+    return render_template("announcements.html")
+
+
 @app.get("/statistics")
 def statistics_page():
     try:
