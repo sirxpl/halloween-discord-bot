@@ -77,6 +77,11 @@ def dashboard():
 
 
 
+@app.get("/daily")
+def daily_page():
+    return render_template("daily.html")
+
+
 @app.get("/leaderboard")
 def leaderboard_page():
     try:
