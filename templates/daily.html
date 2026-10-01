@@ -11,9 +11,6 @@
     body{margin:0;min-height:100vh;background:#09070d;color:#f8f4ff;font-family:Inter,system-ui,sans-serif}
     body:before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 50% 15%,rgba(113,55,180,.22),transparent 42%),radial-gradient(circle at 15% 80%,rgba(255,122,26,.10),transparent 32%);pointer-events:none}
     main{width:min(900px,calc(100% - 32px));margin:auto;position:relative;z-index:1}
-    nav{height:82px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #292130}
-    .brand{display:flex;align-items:center;gap:11px;color:#fff;text-decoration:none}.brand-mark{font-size:27px}.brand strong{display:block;font-size:17px}.brand span{display:block;color:#958da4;font-size:10px;margin-top:2px}
-    .navlinks{display:flex;gap:20px}.navlinks a{color:#cfc8da;text-decoration:none;font-size:13px;font-weight:600}.navlinks a:hover{color:#fff}
     header{text-align:center;padding:65px 0 34px}.eyebrow{color:#a78bfa;font-size:10px;font-weight:800;letter-spacing:.18em}
     h1{font-size:clamp(38px,7vw,62px);margin:13px 0 12px;letter-spacing:-.05em}header p{margin:0;color:#9b93a7}
     .card{max-width:620px;margin:0 auto;background:rgba(18,14,24,.92);border:1px solid #292130;border-radius:24px;padding:42px 34px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)}
@@ -21,8 +18,7 @@
     .status{padding:14px 18px;border-radius:14px;background:#17121d;border:1px solid #2d2535;color:#d8d0df;font-size:13px;line-height:1.6}
     .status strong{color:#fff}.button{display:inline-block;margin-top:24px;padding:13px 22px;border-radius:12px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:800;font-size:13px}.button:hover{background:#8b5cf6}
     .note{margin-top:20px;color:#756d80;font-size:11px;line-height:1.6}
-    .back{display:inline-block;margin:22px 0 45px;color:#a78bfa;text-decoration:none;font-size:13px;font-weight:700}.back:hover{color:#fff}
-    @media(max-width:650px){nav{height:auto;padding:18px 0;align-items:flex-start}.navlinks{gap:10px;flex-wrap:wrap;justify-content:flex-end}.navlinks a:nth-child(n+3){display:none}.card{padding:34px 20px}}
+    @media(max-width:650px){.card{padding:34px 20px}}
   </style>
 </head>
 <body>
@@ -51,15 +47,6 @@
     </div>
   </aside>
 <main class="section-main">
-  <nav>
-    <a href="/dashboard" class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Event</span></div></a>
-    <div class="navlinks">
-      <a href="/dashboard">Dashboard</a>
-      <a href="/leaderboard">Leaderboard</a>
-      <a href="/daily">Daily</a>
-    </div>
-  </nav>
-
   <header>
     <div class="eyebrow">HALLOWEEN • DAILY REWARD</div>
     <h1>🎃 Daily Candy</h1>
@@ -79,7 +66,6 @@
     <div class="note">OAuth2 can be added later so this page can identify your Discord account and show your exact cooldown and Candy balance.</div>
   </section>
 
-  <a class="back" href="/dashboard">← Back to dashboard</a>
 </main>
 </body>
 </html>
