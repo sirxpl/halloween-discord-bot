@@ -97,6 +97,21 @@ def shop_page():
     return render_template("shop.html", items=SHOP_ITEMS)
 
 
+@app.get("/rewards")
+def rewards_page():
+    return render_template("rewards.html")
+
+
+@app.get("/events")
+def events_page():
+    return render_template("events.html")
+
+
+@app.get("/profile")
+def profile_page():
+    return render_template("profile.html")
+
+
 @app.get("/statistics")
 def statistics_page():
     try:
@@ -109,7 +124,7 @@ def statistics_page():
     d = STATE["discord"]
     labels = {"online":"Online","starting":"Starting","connecting":"Connecting","reconnecting":"Reconnecting","rate_limited":"Rate limited","error":"Offline"}
     bot_status = labels.get(d["state"], "Unknown")
-    return render_template("statistics.html", total_users=total_users, total_candy=total_candy, command_count=6, bot_status=bot_status, db_ok=db_ok)
+    return render_template("statistics.html", total_users=total_users, total_candy=total_candy, command_count=7, bot_status=bot_status, db_ok=db_ok)
 
 @app.get("/daily")
 def daily_page():
@@ -503,7 +518,7 @@ class HalloweenBot(commands.Cog):
         )
         for item in SHOP_ITEMS:
             embed.add_field(
-                name=f"{item["name"]} — {item["price"]:,} 🍬",
+                name=f"{item['name']} — {item['price']:,} 🍬",
                 value=item["description"],
                 inline=False,
             )
