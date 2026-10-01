@@ -33,6 +33,13 @@ db = mongo["halloween_bot"]
 users = db["users"]
 settings = db["settings"]
 
+SHOP_ITEMS = [
+    {"name": "🎃 Pumpkin Lantern", "price": 250, "description": "A spooky lantern for your Halloween inventory."},
+    {"name": "🧙 Witch Hat", "price": 500, "description": "A classic witch hat for your collection."},
+    {"name": "👻 Ghost Companion", "price": 1000, "description": "A friendly little ghost to haunt your inventory."},
+    {"name": "🎃 Golden Pumpkin", "price": 2500, "description": "A rare golden pumpkin for dedicated Candy collectors."},
+]
+
 app = Flask(__name__)
 
 
@@ -68,7 +75,7 @@ def dashboard():
         "dashboard.html",
         total_users=total_users,
         total_candy=total_candy,
-        command_count=6,
+        command_count=7,
         bot_status=discord_status if d["state"] != "online" else "Online",
         discord_status=discord_status,
         db_status=db_status,
@@ -83,6 +90,11 @@ def halloween_quests_page():
 @app.get("/announcements")
 def announcements_page():
     return render_template("announcements.html")
+
+
+@app.get("/shop")
+def shop_page():
+    return render_template("shop.html", items=SHOP_ITEMS)
 
 
 @app.get("/statistics")
@@ -480,6 +492,22 @@ class HalloweenBot(commands.Cog):
             description="\n".join(lines),
             color=discord.Color.orange(),
         )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="shop", description="View the Halloween Candy shop.")
+    async def shop(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🛒 Halloween Candy Shop",
+            description="Spend your hard-earned 🍬 Candy on spooky collectibles.",
+            color=discord.Color.orange(),
+        )
+        for item in SHOP_ITEMS:
+            embed.add_field(
+                name=f"{item["name"]} — {item["price"]:,} 🍬",
+                value=item["description"],
+                inline=False,
+            )
+        embed.set_footer(text="Shop catalog • More purchasing features can be added later")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="profile", description="View your Candy profile.")
