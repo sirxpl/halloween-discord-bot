@@ -80,6 +80,20 @@ def dashboard():
 def halloween_quests_page():
     return render_template("halloween_quests.html")
 
+@app.get("/statistics")
+def statistics_page():
+    try:
+        total_users = users.count_documents({})
+        total_candy = sum((doc.get("balance", 0) or 0) for doc in users.find({}, {"balance": 1}))
+        db_ok = True
+    except PyMongoError:
+        log.exception("Statistics could not reach MongoDB")
+        total_users, total_candy, db_ok = 0, 0, False
+    d = STATE["discord"]
+    labels = {"online":"Online","starting":"Starting","connecting":"Connecting","reconnecting":"Reconnecting","rate_limited":"Rate limited","error":"Offline"}
+    bot_status = labels.get(d["state"], "Unknown")
+    return render_template("statistics.html", total_users=total_users, total_candy=total_candy, command_count=6, bot_status=bot_status, db_ok=db_ok)
+
 @app.get("/daily")
 def daily_page():
     return render_template("daily.html")
