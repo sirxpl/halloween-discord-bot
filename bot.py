@@ -76,6 +76,9 @@ def dashboard():
     )
 
 
+@app.get("/halloween-quests")
+def halloween_quests_page():
+    return render_template("halloween_quests.html")
 
 @app.get("/daily")
 def daily_page():
