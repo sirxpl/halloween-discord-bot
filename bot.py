@@ -83,13 +83,20 @@ def leaderboard_page():
         top_users = list(
             users.find({}).sort("balance", -1).limit(25)
         )
-        leaderboard = [
-            {
-                "name": f"User {doc.get('user_id')}",
+        discord_bot = BOT["instance"]
+        leaderboard = []
+        for doc in top_users:
+            user_id = doc.get("user_id")
+            discord_user = discord_bot.get_user(user_id) if discord_bot else None
+            name = (
+                f"@{doc.get('username')}"
+                if doc.get("username")
+                else (f"@{discord_user.name}" if discord_user else f"@{user_id}")
+            )
+            leaderboard.append({
+                "name": name,
                 "balance": doc.get("balance", 0) or 0,
-            }
-            for doc in top_users
-        ]
+            })
         db_ok = True
     except PyMongoError:
         log.exception("Leaderboard could not reach MongoDB")
@@ -259,18 +266,26 @@ def get_user(guild_id: int, user_id: int):
     return users.find_one({"guild_id": guild_id, "user_id": user_id})
 
 
-def ensure_user(guild_id: int, user_id: int):
+def ensure_user(guild_id: int, user_id: int, username=None, display_name=None):
+    update = {
+        "$setOnInsert": {
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "balance": 0,
+            "inventory": [],
+            "created_at": now_utc(),
+        }
+    }
+    identity = {}
+    if username:
+        identity["username"] = username
+    if display_name:
+        identity["display_name"] = display_name
+    if identity:
+        update["$set"] = identity
     return users.find_one_and_update(
         {"guild_id": guild_id, "user_id": user_id},
-        {
-            "$setOnInsert": {
-                "guild_id": guild_id,
-                "user_id": user_id,
-                "balance": 0,
-                "inventory": [],
-                "created_at": now_utc(),
-            }
-        },
+        update,
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
@@ -301,7 +316,7 @@ class HalloweenBot(commands.Cog):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-        user = await db(ensure_user, interaction.guild.id, interaction.user.id)
+        user = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         await interaction.response.send_message(
             f"🍬 **{interaction.user.display_name}** has **{user['balance']:,} Candy**."
         )
@@ -314,7 +329,7 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
-        await db(ensure_user, guild_id, user_id)
+        await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
@@ -340,7 +355,7 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
-        await db(ensure_user, guild_id, user_id)
+        await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         cutoff = now - timedelta(hours=1)
         reward = random.randint(25, 150)
         updated = await db(
@@ -374,7 +389,7 @@ class HalloweenBot(commands.Cog):
         if amount <= 0:
             await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
             return
-        sender = await db(ensure_user, interaction.guild.id, interaction.user.id)
+        sender = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         debited = await db(
             users.find_one_and_update,
             {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "balance": {"$gte": amount}},
@@ -387,7 +402,7 @@ class HalloweenBot(commands.Cog):
                 ephemeral=True,
             )
             return
-        await db(ensure_user, interaction.guild.id, member.id)
+        await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         await db(add_candy, interaction.guild.id, member.id, amount)
         await interaction.response.send_message(
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
@@ -409,8 +424,8 @@ class HalloweenBot(commands.Cog):
         lines = []
         for index, user in enumerate(top_users, start=1):
             member = interaction.guild.get_member(user["user_id"])
-            name = member.display_name if member else f"User {user['user_id']}"
-            lines.append(f"**{index}.** {name} — **{user['balance']:,} 🍬**")
+            mention = member.mention if member else f"<@{user['user_id']}>"
+            lines.append(f"**{index}.** {mention} — **{user['balance']:,} 🍬**")
         embed = discord.Embed(
             title="🍬 Candy Leaderboard",
             description="\n".join(lines),
@@ -423,7 +438,7 @@ class HalloweenBot(commands.Cog):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-        user = await db(ensure_user, interaction.guild.id, interaction.user.id)
+        user = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         inventory = user.get("inventory", [])
         embed = discord.Embed(
             title=f"🎃 {interaction.user.display_name}'s Profile",
