@@ -85,7 +85,10 @@ def add_candy(guild_id: int, user_id: int, amount: int):
 
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+def create_bot():
+    return commands.Bot(command_prefix="!", intents=intents)
 
 
 class HalloweenBot(commands.Cog):
@@ -116,7 +119,6 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
-
         ensure_user(guild_id, user_id)
 
         cutoff = now - timedelta(hours=24)
@@ -129,10 +131,7 @@ class HalloweenBot(commands.Cog):
                     {"last_daily": {"$lte": cutoff}},
                 ],
             },
-            {
-                "$set": {"last_daily": now},
-                "$inc": {"balance": 100},
-            },
+            {"$set": {"last_daily": now}, "$inc": {"balance": 100}},
             return_document=ReturnDocument.AFTER,
         )
 
@@ -168,7 +167,6 @@ class HalloweenBot(commands.Cog):
 
         cutoff = now - timedelta(hours=1)
         reward = random.randint(25, 150)
-
         updated = users.find_one_and_update(
             {
                 "guild_id": guild_id,
@@ -178,10 +176,7 @@ class HalloweenBot(commands.Cog):
                     {"last_trick_or_treat": {"$lte": cutoff}},
                 ],
             },
-            {
-                "$set": {"last_trick_or_treat": now},
-                "$inc": {"balance": reward},
-            },
+            {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
 
@@ -190,8 +185,7 @@ class HalloweenBot(commands.Cog):
             next_claim = user["last_trick_or_treat"] + timedelta(hours=1)
             timestamp = int(next_claim.timestamp())
             await interaction.response.send_message(
-                f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.",
-                ephemeral=True,
+                f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
 
@@ -231,7 +225,6 @@ class HalloweenBot(commands.Cog):
             return
 
         sender = ensure_user(interaction.guild.id, interaction.user.id)
-
         debited = users.find_one_and_update(
             {
                 "guild_id": interaction.guild.id,
@@ -251,7 +244,6 @@ class HalloweenBot(commands.Cog):
 
         ensure_user(interaction.guild.id, member.id)
         add_candy(interaction.guild.id, member.id, amount)
-
         await interaction.response.send_message(
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
         )
@@ -267,11 +259,8 @@ class HalloweenBot(commands.Cog):
             return
 
         top_users = list(
-            users.find({"guild_id": interaction.guild.id})
-            .sort("balance", -1)
-            .limit(10)
+            users.find({"guild_id": interaction.guild.id}).sort("balance", -1).limit(10)
         )
-
         if not top_users:
             await interaction.response.send_message(
                 "🍬 Nobody has earned Candy yet!"
@@ -286,7 +275,7 @@ class HalloweenBot(commands.Cog):
 
         embed = discord.Embed(
             title="🍬 Candy Leaderboard",
-            description="\n".join(lines),
+            description="\\n".join(lines),
             color=discord.Color.orange(),
         )
         await interaction.response.send_message(embed=embed)
@@ -301,7 +290,6 @@ class HalloweenBot(commands.Cog):
 
         user = ensure_user(interaction.guild.id, interaction.user.id)
         inventory = user.get("inventory", [])
-
         embed = discord.Embed(
             title=f"🎃 {interaction.user.display_name}'s Profile",
             color=discord.Color.orange(),
@@ -311,42 +299,43 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
 
-async def setup_bot():
+async def setup_bot(bot):
     await bot.add_cog(HalloweenBot(bot))
 
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print(f"Connected to {len(bot.guilds)} guild(s).")
-    if not getattr(bot, "_commands_synced", False):
-        synced = await bot.tree.sync()
-        bot._commands_synced = True
-        print(f"Synced {len(synced)} application command(s).")
+    @bot.event
+    async def on_ready():
+        print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+        print(f"Connected to {len(bot.guilds)} guild(s).")
+        if not getattr(bot, "_commands_synced", False):
+            synced = await bot.tree.sync()
+            bot._commands_synced = True
+            print(f"Synced {len(synced)} application command(s).")
 
 
 async def main():
-    await setup_bot()
     retry_delay = 30
 
     while True:
+        bot = create_bot()
+        await setup_bot(bot)
+
         try:
-            # Create a fresh Discord client/session for every login attempt.
-            # This avoids reusing a closed aiohttp session after a 429.
             await bot.start(DISCORD_TOKEN)
             return
         except discord.HTTPException as exc:
             if exc.status != 429:
+                await bot.close()
                 raise
 
             print(
                 f"Discord returned HTTP 429 during login. "
-                f"Waiting {retry_delay}s before retrying."
+                f"Waiting {retry_delay}s before creating a fresh bot and retrying."
             )
             await bot.close()
             await asyncio.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 300)
         except discord.LoginFailure:
+            await bot.close()
             raise
         except Exception:
             await bot.close()
