@@ -11,3 +11,6 @@
 .section-main>.hero:after{content:none}
 .sidebar .dashboard-nav{height:auto;flex-shrink:0;align-items:stretch;justify-content:initial;border:0}
 .sidebar-bottom{flex-shrink:0}
+.section-main.wrap{width:calc(100% - 250px);max-width:1500px;margin:0 0 0 250px}
+@media(max-width:900px){.section-main.wrap{width:calc(100% - 70px);max-width:none;margin-left:70px}}
+@media(max-width:600px){.section-main.wrap{padding:18px}}
