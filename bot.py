@@ -76,6 +76,26 @@ def dashboard():
     )
 
 
+
+@app.get("/leaderboard")
+def leaderboard_page():
+    try:
+        top_users = list(
+            users.find({}).sort("balance", -1).limit(25)
+        )
+        leaderboard = [
+            {
+                "name": f"User {doc.get('user_id')}",
+                "balance": doc.get("balance", 0) or 0,
+            }
+            for doc in top_users
+        ]
+        db_ok = True
+    except PyMongoError:
+        log.exception("Leaderboard could not reach MongoDB")
+        leaderboard, db_ok = [], False
+    return render_template("leaderboard.html", leaderboard=leaderboard, db_ok=db_ok)
+
 @app.get("/status")
 def status_page():
     return render_template("status.html", s=build_status())
