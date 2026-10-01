@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 from pymongo import MongoClient, ReturnDocument
 from dotenv import load_dotenv
 
@@ -35,6 +35,22 @@ app = Flask(__name__)
 @app.get("/")
 def health():
     return jsonify({"status": "online", "service": "halloween-discord-bot"})
+
+
+@app.get("/dashboard")
+def dashboard():
+    total_users = users.count_documents({})
+    total_candy = sum(
+        (doc.get("balance", 0) or 0)
+        for doc in users.find({}, {"balance": 1})
+    )
+    return render_template(
+        "dashboard.html",
+        total_users=total_users,
+        total_candy=total_candy,
+        command_count=6,
+        bot_status="Online",
+    )
 
 
 @app.get("/health")
