@@ -1,4 +1,5 @@
 import os
+import logging
 import random
 import threading
 import asyncio
@@ -9,9 +10,13 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask, jsonify, render_template
 from pymongo import MongoClient, ReturnDocument
+from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
 
 load_dotenv()
+
+discord.utils.setup_logging(level=logging.INFO)
+log = logging.getLogger("halloween-bot")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MONGODB_URI = os.getenv("MONGODB_URI")
@@ -22,7 +27,7 @@ if not DISCORD_TOKEN:
 if not MONGODB_URI:
     raise RuntimeError("MONGODB_URI is not configured.")
 
-mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=10000)
+mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
 db = mongo["halloween_bot"]
 users = db["users"]
 settings = db["settings"]
@@ -37,17 +42,22 @@ def home():
 
 @app.get("/dashboard")
 def dashboard():
-    total_users = users.count_documents({})
-    total_candy = sum(
-        (doc.get("balance", 0) or 0)
-        for doc in users.find({}, {"balance": 1})
-    )
+    try:
+        total_users = users.count_documents({})
+        total_candy = sum(
+            (doc.get("balance", 0) or 0)
+            for doc in users.find({}, {"balance": 1})
+        )
+        status = "Online"
+    except PyMongoError:
+        log.exception("Dashboard could not reach MongoDB")
+        total_users, total_candy, status = 0, 0, "Database unavailable"
     return render_template(
         "dashboard.html",
         total_users=total_users,
         total_candy=total_candy,
         command_count=6,
-        bot_status="Online",
+        bot_status=status,
     )
 
 
@@ -62,6 +72,11 @@ def health_check():
 
 def run_web_server():
     app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+
+
+async def db(fn, *args, **kwargs):
+    """Run a blocking pymongo call in a worker thread so the Discord loop never freezes."""
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def now_utc():
@@ -114,7 +129,7 @@ class HalloweenBot(commands.Cog):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-        user = ensure_user(interaction.guild.id, interaction.user.id)
+        user = await db(ensure_user, interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
             f"🍬 **{interaction.user.display_name}** has **{user['balance']:,} Candy**."
         )
@@ -127,16 +142,17 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
-        ensure_user(guild_id, user_id)
+        await db(ensure_user, guild_id, user_id)
         cutoff = now - timedelta(hours=24)
-        updated = users.find_one_and_update(
+        updated = await db(
+            users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
              "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
             {"$set": {"last_daily": now}, "$inc": {"balance": 100}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            user = get_user(guild_id, user_id)
+            user = await db(get_user, guild_id, user_id)
             timestamp = int((user["last_daily"] + timedelta(hours=24)).timestamp())
             await interaction.response.send_message(
                 f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
@@ -152,17 +168,18 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         now = now_utc()
-        ensure_user(guild_id, user_id)
+        await db(ensure_user, guild_id, user_id)
         cutoff = now - timedelta(hours=1)
         reward = random.randint(25, 150)
-        updated = users.find_one_and_update(
+        updated = await db(
+            users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
              "$or": [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": cutoff}}]},
             {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            user = get_user(guild_id, user_id)
+            user = await db(get_user, guild_id, user_id)
             timestamp = int((user["last_trick_or_treat"] + timedelta(hours=1)).timestamp())
             await interaction.response.send_message(
                 f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
@@ -185,8 +202,9 @@ class HalloweenBot(commands.Cog):
         if amount <= 0:
             await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
             return
-        sender = ensure_user(interaction.guild.id, interaction.user.id)
-        debited = users.find_one_and_update(
+        sender = await db(ensure_user, interaction.guild.id, interaction.user.id)
+        debited = await db(
+            users.find_one_and_update,
             {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "balance": {"$gte": amount}},
             {"$inc": {"balance": -amount}},
             return_document=ReturnDocument.AFTER,
@@ -197,8 +215,8 @@ class HalloweenBot(commands.Cog):
                 ephemeral=True,
             )
             return
-        ensure_user(interaction.guild.id, member.id)
-        add_candy(interaction.guild.id, member.id, amount)
+        await db(ensure_user, interaction.guild.id, member.id)
+        await db(add_candy, interaction.guild.id, member.id, amount)
         await interaction.response.send_message(
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
         )
@@ -208,8 +226,10 @@ class HalloweenBot(commands.Cog):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-        top_users = list(
-            users.find({"guild_id": interaction.guild.id}).sort("balance", -1).limit(10)
+        top_users = await db(
+            lambda: list(
+                users.find({"guild_id": interaction.guild.id}).sort("balance", -1).limit(10)
+            )
         )
         if not top_users:
             await interaction.response.send_message("🍬 Nobody has earned Candy yet!")
@@ -231,7 +251,7 @@ class HalloweenBot(commands.Cog):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
             return
-        user = ensure_user(interaction.guild.id, interaction.user.id)
+        user = await db(ensure_user, interaction.guild.id, interaction.user.id)
         inventory = user.get("inventory", [])
         embed = discord.Embed(
             title=f"🎃 {interaction.user.display_name}'s Profile",
@@ -245,17 +265,45 @@ class HalloweenBot(commands.Cog):
 async def setup_bot(bot):
     await bot.add_cog(HalloweenBot(bot))
 
+    @bot.tree.error
+    async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+        original = getattr(error, "original", error)
+        log.error("Command /%s failed: %r", getattr(interaction.command, "name", "?"), original, exc_info=original)
+        if isinstance(original, PyMongoError):
+            msg = "🎃 The candy vault is unreachable right now. Please try again in a moment."
+        else:
+            msg = "❌ Something went wrong running that command."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            pass
+
     @bot.event
     async def on_ready():
-        print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-        print(f"Connected to {len(bot.guilds)} guild(s).")
+        log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
+        log.info(f"Connected to {len(bot.guilds)} guild(s).")
         if not getattr(bot, "_commands_synced", False):
             synced = await bot.tree.sync()
             bot._commands_synced = True
-            print(f"Synced {len(synced)} application command(s).")
+            log.info(f"Synced {len(synced)} application command(s).")
+
+
+async def check_database():
+    try:
+        await db(mongo.admin.command, "ping")
+        log.info("MongoDB connection OK.")
+    except PyMongoError as exc:
+        log.error(
+            "MongoDB check FAILED (%s). Commands will not work until MONGODB_URI "
+            "(username/password/network access) is fixed.", exc.__class__.__name__
+        )
 
 
 async def main():
+    await check_database()
     retry_delay = 30
     while True:
         bot = create_bot()
@@ -267,9 +315,9 @@ async def main():
             if exc.status != 429:
                 await bot.close()
                 raise
-            print(
-                f"Discord returned HTTP 429 during login. "
-                f"Waiting {retry_delay}s before creating a fresh bot and retrying."
+            log.warning(
+                "Discord returned HTTP 429 during login. "
+                "Waiting %ss before creating a fresh bot and retrying.", retry_delay
             )
             await bot.close()
             await asyncio.sleep(retry_delay)
