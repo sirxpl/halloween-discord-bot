@@ -18,5 +18,12 @@ h1 span{background:linear-gradient(90deg,#b67cff,#ff9b3d);-webkit-background-cli
 .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;text-align:left}
 .cards>div{background:rgba(18,14,24,.9);border:1px solid #292130;border-radius:18px;padding:23px}
 .cards b{font-size:25px;display:block;margin-bottom:18px}.cards strong{display:block;font-size:15px;margin-bottom:8px}.cards span{display:block;color:#91899c;font-size:13px;line-height:1.55}
+.platforms{border-top:1px solid #292130;padding:30px 0 8px;text-align:center}
+.platforms-title{margin:0 0 18px;color:#7f778b;font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.platform-list{display:flex;justify-content:center;align-items:center;gap:30px;flex-wrap:wrap}
+.platform{display:inline-flex;align-items:center;gap:9px;color:#aaa2b5;text-decoration:none;font-size:13px;font-weight:600;transition:color .2s ease}
+.platform:hover{color:#fff}
+.platform img{width:19px;height:19px;opacity:.75;transition:opacity .2s ease}
+.platform:hover img{opacity:1}
 footer{text-align:center;color:#655e6e;font-size:12px;padding:24px 0 38px}footer span{padding:0 8px}
 @media(max-width:700px){main{width:min(100% - 26px,560px)}nav{height:72px}.nav-link{display:none}.hero{padding:65px 0 48px}.hero>p{font-size:15px}.cards{grid-template-columns:1fr}.actions{margin-bottom:50px}}
