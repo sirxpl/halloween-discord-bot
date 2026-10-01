@@ -323,8 +323,25 @@ async def on_ready():
 
 async def main():
     await setup_bot()
-    async with bot:
-        await bot.start(DISCORD_TOKEN)
+    retry_delay = 30
+
+    while True:
+        try:
+            async with bot:
+                await bot.start(DISCORD_TOKEN)
+            return
+        except discord.HTTPException as exc:
+            if exc.status != 429:
+                raise
+
+            print(
+                f"Discord returned HTTP 429 during login. "
+                f"Waiting {retry_delay}s before retrying."
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 300)
+        except discord.LoginFailure:
+            raise
 
 
 if __name__ == "__main__":
