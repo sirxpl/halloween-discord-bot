@@ -5,3 +5,7 @@
 .online.offline{color:#fca5a5;background:#3b1717}.pill.pill-off{color:#fca5a5;background:#3b1717;border-color:#6b2a2a}
 
 .sidebar::-webkit-scrollbar{width:7px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar::-webkit-scrollbar-thumb{background:#4b3b63;border-radius:99px}.sidebar::-webkit-scrollbar-thumb:hover{background:#665080}
+
+.section-main>header{display:block}
+.section-main>.hero{display:block;justify-content:initial;overflow:visible}
+.section-main>.hero:after{content:none}
