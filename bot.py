@@ -315,6 +315,10 @@ async def setup_bot():
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"Connected to {len(bot.guilds)} guild(s).")
+    if not getattr(bot, "_commands_synced", False):
+        synced = await bot.tree.sync()
+        bot._commands_synced = True
+        print(f"Synced {len(synced)} application command(s).")
 
 
 async def main():
