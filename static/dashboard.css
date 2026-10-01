@@ -9,3 +9,5 @@
 .section-main>header{display:block}
 .section-main>.hero{display:block;justify-content:initial;overflow:visible}
 .section-main>.hero:after{content:none}
+.sidebar .dashboard-nav{height:auto;flex-shrink:0;align-items:stretch;justify-content:initial;border:0}
+.sidebar-bottom{flex-shrink:0}
