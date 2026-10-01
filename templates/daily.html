@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aurelois • Daily Reward</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     *{box-sizing:border-box}
@@ -23,12 +24,11 @@
     .back{display:inline-block;margin:22px 0 45px;color:#a78bfa;text-decoration:none;font-size:13px;font-weight:700}.back:hover{color:#fff}
     @media(max-width:650px){nav{height:auto;padding:18px 0;align-items:flex-start}.navlinks{gap:10px;flex-wrap:wrap;justify-content:flex-end}.navlinks a:nth-child(n+3){display:none}.card{padding:34px 20px}}
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 </head>
 <body>
 <aside class="sidebar">
     <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
-    <nav>
+    <nav class="dashboard-nav">
       <a href="/dashboard"><span>⌂</span> Overview</a>
       <a href="#"><span>🍬</span> Economy</a>
       <a href="/shop"><span>🛒</span> Shop</a>
