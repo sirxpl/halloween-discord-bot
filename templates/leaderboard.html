@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aurelois • Candy Leaderboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:#09070d;color:#f8f4ff;font-family:Inter,system-ui,sans-serif}
+    body:before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 50% 15%,rgba(113,55,180,.22),transparent 42%),radial-gradient(circle at 85% 80%,rgba(255,122,26,.10),transparent 32%);pointer-events:none}
+    main{width:min(1000px,calc(100% - 32px));margin:auto;position:relative;z-index:1}
+    nav{height:82px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #292130}
+    .brand{display:flex;align-items:center;gap:11px}.brand-mark{font-size:27px}.brand strong{display:block;font-size:17px}.brand span{display:block;color:#958da4;font-size:10px;margin-top:2px}
+    nav a{color:#cfc8da;text-decoration:none;font-size:13px;font-weight:600}.navlinks{display:flex;gap:20px}.navlinks a:hover{color:#fff}
+    header{text-align:center;padding:65px 0 34px}.eyebrow{color:#a78bfa;font-size:10px;font-weight:800;letter-spacing:.18em}h1{font-size:clamp(38px,7vw,64px);margin:13px 0 12px;letter-spacing:-.05em}header p{margin:0;color:#9b93a7}
+    .board{background:rgba(18,14,24,.9);border:1px solid #292130;border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+    .board-head{display:grid;grid-template-columns:70px 1fr 180px;padding:17px 22px;color:#756d80;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid #292130}
+    .row{display:grid;grid-template-columns:70px 1fr 180px;align-items:center;padding:19px 22px;border-bottom:1px solid #211b27}.row:last-child{border-bottom:0}
+    .rank{font-size:17px;font-weight:800;color:#81798d}.rank.top{color:#ffb454}.player{display:flex;align-items:center;gap:12px}.avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#382052,#6b3295);font-weight:800}.name{font-weight:700}.sub{display:block;color:#756d80;font-size:11px;margin-top:3px}.candy{text-align:right;font-weight:800;color:#ffb454}.empty{padding:55px;text-align:center;color:#8f879a}
+    .back{display:inline-block;margin:22px 0 45px;color:#a78bfa;text-decoration:none;font-size:13px;font-weight:700}.back:hover{color:#fff}
+    @media(max-width:650px){nav{height:auto;padding:18px 0;align-items:flex-start}.navlinks{gap:10px;flex-wrap:wrap;justify-content:flex-end}.navlinks a:nth-child(n+4){display:none}.board-head,.row{grid-template-columns:48px 1fr 105px;padding-left:14px;padding-right:14px}.candy{font-size:13px}}
+  </style>
+</head>
+<body>
+<main>
+  <nav>
+    <a href="/dashboard" class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Event</span></div></a>
+    <div class="navlinks">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/leaderboard">Leaderboard</a>
+      <a href="/daily">Daily</a>
+    </div>
+  </nav>
+
+  <header>
+    <div class="eyebrow">HALLOWEEN • ECONOMY</div>
+    <h1>🍬 Candy Leaderboard</h1>
+    <p>See who has collected the most Candy across the Aurelois Halloween Event.</p>
+  </header>
+
+  <section class="board">
+    <div class="board-head"><span>Rank</span><span>Player</span><span style="text-align:right">Candy</span></div>
+    {% if leaderboard %}
+      {% for user in leaderboard %}
+      <div class="row">
+        <div class="rank{% if loop.index <= 3 %} top{% endif %}">#{{ loop.index }}</div>
+        <div class="player">
+          <div class="avatar">{{ loop.index }}</div>
+          <div><span class="name">{{ user.name }}</span><span class="sub">Candy collector</span></div>
+        </div>
+        <div class="candy">{{ "{:,}".format(user.balance) }} 🍬</div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">🍬 Nobody has earned Candy yet. Be the first!</div>
+    {% endif %}
+  </section>
+
+  <a class="back" href="/dashboard">← Back to dashboard</a>
+</main>
+</body>
+</html>
