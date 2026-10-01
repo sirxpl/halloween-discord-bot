@@ -17,6 +17,7 @@
       <a href="#"><span>👥</span> Users</a>
       <a href="#"><span>🏆</span> Leaderboards</a>
       <a href="#"><span>📋</span> Logging</a>
+      <a href="/status"><span>📡</span> Status</a>
       <a href="#"><span>🎃</span> Events</a>
     </nav>
     <div class="sidebar-bottom">
@@ -36,7 +37,7 @@
     </header>
 
     <section class="hero">
-      <div><div class="pill">● {{ bot_status }}</div><h2>Welcome to the Halloween Dashboard</h2><p>Your bot is ready for the spooky season. Configure your economy, events, shop, and server settings here.</p><button class="primary">Explore dashboard →</button></div>
+      <div><div class="pill{% if not discord_ok %} pill-off{% endif %}">● {{ bot_status }}</div><h2>Welcome to the Halloween Dashboard</h2><p>Your bot is ready for the spooky season. Configure your economy, events, shop, and server settings here.</p><button class="primary">Explore dashboard →</button></div>
       <div class="moon">🌙</div>
     </section>
 
@@ -54,8 +55,8 @@
         <button><b>🎃</b><span><strong>Events</strong><small>Plan Halloween events</small></span><i>→</i></button>
         <button><b>⚙️</b><span><strong>Settings</strong><small>Configure your server</small></span><i>→</i></button>
       </div></div>
-      <div class="panel"><div class="panel-head"><div><h3>Bot status</h3><p>Live service information</p></div><span class="online">● Online</span></div>
-        <div class="status-row"><span>Discord</span><strong>Connected</strong></div><div class="status-row"><span>Database</span><strong>Connected</strong></div><div class="status-row"><span>Web dashboard</span><strong>Running</strong></div>
+      <div class="panel"><div class="panel-head"><div><h3>Bot status</h3><p>Live service information</p></div><span class="online{% if not discord_ok %} offline{% endif %}">● {{ bot_status }}</span></div>
+        <div class="status-row"><span>Discord</span><strong>{{ discord_status }}</strong></div><div class="status-row"><span>Database</span><strong>{{ db_status }}</strong></div><div class="status-row"><span>Web dashboard</span><strong>Running</strong></div><div class="status-row"><span>Full details</span><strong><a href="/status" style="color:#a78bfa;text-decoration:none">Open status page →</a></strong></div>
       </div>
     </section>
 
