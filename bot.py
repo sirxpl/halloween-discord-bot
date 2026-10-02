@@ -255,7 +255,7 @@ def get_guild_settings(guild_id):
 def profile_page():
     user = session.get("discord_user")
     if not user:
-        return render_template("profile.html", logged_in=False, user=None, avatar_url=None)
+        return redirect(url_for("dashboard"))
     guild = selected_guild()
     profile = None
     rank = None
