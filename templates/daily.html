@@ -86,10 +86,9 @@
         <strong>Server: {{ guild.name }}</strong><br>
         Claims from the dashboard and <strong>/daily</strong> use the same MongoDB reward record, so the cooldown stays synchronized.
       </div>
-      {% if request.args.get("claimed") %}
-        <div class="success">🎉 Reward claimed! You received <strong>+{{ daily_reward }} 🍬 Candy</strong>.</div>
-      {% elif request.args.get("error") == "cooldown" and next_daily %}
-        <div class="status cooldown-box">⏰ Already claimed. Next reward in <strong id="daily-countdown" data-next="{{ next_daily.timestamp()|int }}">calculating...</strong>.</div>
+      {% if next_daily %}
+        {% if request.args.get("claimed") %}<div class="success">🎉 Reward claimed! You received <strong>+{{ daily_reward }} 🍬 Candy</strong>.</div>{% endif %}
+        <div class="status cooldown-box">⏰ Next daily reward in <strong id="daily-countdown" data-next="{{ next_daily.timestamp()|int }}">calculating...</strong>.</div>
       {% else %}
         <form method="post" action="{{ url_for('daily_claim') }}">
           <button class="button" type="submit">🎁 Claim Daily Reward</button>
