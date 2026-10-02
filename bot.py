@@ -155,11 +155,10 @@ def oauth_callback():
         return "Discord account information could not be loaded.", 502
     me = me_response.json()
     guilds = guild_response.json()
-    manageable = [g for g in guilds if (int(g.get("permissions", 0)) & 0x8) or (int(g.get("permissions", 0)) & 0x20)]
     session["discord_user"] = me
-    session["discord_guilds"] = manageable
-    if manageable:
-        session["selected_guild_id"] = str(manageable[0]["id"])
+    session["discord_guilds"] = guilds
+    if guilds:
+        session["selected_guild_id"] = str(guilds[0]["id"])
     return redirect(url_for("profile_page"))
 
 
@@ -175,7 +174,7 @@ def discord_avatar_url(user):
     return f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png?size=256"
 
 
-def selected_guild():
+def selected_guild(require_manage=False):
     guilds = session.get("discord_guilds", [])
     wanted = str(request.args.get("guild") or session.get("selected_guild_id") or "")
     guild = next((g for g in guilds if str(g.get("id")) == wanted), None)
@@ -220,6 +219,9 @@ def settings_page():
     if not guild:
         return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=[], guild=None, config=None, error="You need Manage Server or Administrator permission in a Discord server to configure it.")
     guild_id = int(guild["id"])
+    permissions = int(guild.get("permissions", 0))
+    if not (permissions & 0x8 or permissions & 0x20):
+        return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=None, error="You need Manage Server or Administrator permission for this server.")
     if request.method == "POST":
         try:
             daily_reward = max(0, min(int(request.form.get("daily_reward", 100)), 100000))
