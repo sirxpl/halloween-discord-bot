@@ -549,9 +549,10 @@ def users_page():
         query["$or"] = terms
 
     records = list(users.find(query).sort("balance", -1).limit(100))
+    control_query = {"guild_id": int(guild_id)} if guild_id and str(guild_id).isdigit() else {}
     control_map = {
         (int(item["guild_id"]), int(item["user_id"])): item
-        for item in member_controls.find(query if guild_id else {}).limit(500)
+        for item in member_controls.find(control_query).limit(500)
     }
     for record in records:
         control = control_map.get((int(record.get("guild_id", 0)), int(record.get("user_id", 0))), {})
