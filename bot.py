@@ -882,7 +882,8 @@ class HalloweenBot(commands.Cog):
                 f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)\n        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
+        await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)
+        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
