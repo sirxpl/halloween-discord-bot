@@ -359,7 +359,25 @@ async def _send_discord_log(guild_id, action, username, amount, details):
     if details: message += f"\nDetails: {str(details)[:900]}"
     try:
         if destination["type"] == "webhook":
-            requests.post(destination.get("url", ""), json={"content": message}, timeout=8)
+            webhook_url = (destination.get("url") or "").strip()
+            if not webhook_url:
+                raise ValueError("Webhook URL is empty.")
+            response = requests.post(
+                webhook_url + ("&" if "?" in webhook_url else "?") + "wait=true",
+                json={
+                    "username": "Aureolis Logs",
+                    "content": message,
+                    "allowed_mentions": {"parse": []},
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=8,
+            )
+            if not response.ok:
+                log.error(
+                    "Discord webhook delivery failed: HTTP %s: %s",
+                    response.status_code,
+                    response.text[:500],
+                )
         elif destination["type"] == "channel":
             bot = BOT.get("instance")
             channel = bot.get_channel(int(destination.get("channel_id", 0))) if bot else None
