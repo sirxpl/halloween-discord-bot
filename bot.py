@@ -41,7 +41,8 @@ if not FLASK_SECRET_KEY:
 mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
 db = mongo["halloween_bot"]
 users = db["users"]
-settings = db["settings"]
+
+ADMIN_USER_IDS = {777341204047331348}
 
 SHOP_ITEMS = [
     {"name": "🎃 Pumpkin Lantern", "price": 250, "description": "A spooky lantern for your Halloween inventory."},
@@ -252,11 +253,13 @@ def selected_guild(require_manage=False):
     return None
 
 
-def get_guild_settings(guild_id):
-    defaults = {"event_enabled": True, "daily_reward": 100, "trick_or_treat_min": 25, "trick_or_treat_max": 150}
-    stored = settings.find_one({"guild_id": guild_id}) or {}
-    defaults.update({k: stored[k] for k in defaults if k in stored})
-    return defaults
+DAILY_REWARD = 100
+TRICK_OR_TREAT_MIN = 25
+TRICK_OR_TREAT_MAX = 150
+
+
+def is_admin(user_id):
+    return int(user_id) in ADMIN_USER_IDS
 
 
 @app.get("/profile")
@@ -275,28 +278,37 @@ def profile_page():
     return render_template("profile.html", logged_in=True, user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, profile=profile, rank=rank)
 
 
-@app.route("/settings", methods=["GET", "POST"])
-def settings_page():
+@app.get("/access-control")
+def access_control_page():
     user = session.get("discord_user")
     if not user:
         return redirect(url_for("login"))
-    guild = selected_guild()
-    if not guild:
-        return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=[], guild=None, config=None, error="You need Manage Server or Administrator permission in a Discord server to configure it.")
-    guild_id = int(guild["id"])
-    permissions = int(guild.get("permissions", 0))
-    if not (permissions & 0x8 or permissions & 0x20):
-        return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=None, error="You need Manage Server or Administrator permission for this server.")
-    if request.method == "POST":
-        try:
-            daily_reward = max(0, min(int(request.form.get("daily_reward", 100)), 100000))
-            minimum = max(1, min(int(request.form.get("trick_or_treat_min", 25)), 100000))
-            maximum = max(minimum, min(int(request.form.get("trick_or_treat_max", 150)), 100000))
-        except (TypeError, ValueError):
-            return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=get_guild_settings(guild_id), error="Please enter valid numeric settings.")
-        config = {"event_enabled": request.form.get("event_enabled") == "on", "daily_reward": daily_reward, "trick_or_treat_min": minimum, "trick_or_treat_max": maximum, "updated_at": now_utc(), "updated_by": int(user["id"])}
-        settings.update_one({"guild_id": guild_id}, {"$set": config, "$setOnInsert": {"guild_id": guild_id}}, upsert=True)
-    return render_template("settings.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, config=get_guild_settings(guild_id), saved=request.method == "POST")
+    if not is_admin(user["id"]):
+        return render_template(
+            "access_control.html",
+            user=user,
+            avatar_url=discord_avatar_url(user),
+            allowed=False,
+            bot_guilds=[],
+        ), 403
+
+    bot = BOT["instance"]
+    bot_guilds = []
+    if bot is not None and not bot.is_closed():
+        bot_guilds = sorted(
+            [{"id": str(guild.id), "name": guild.name, "member_count": guild.member_count or 0}
+             for guild in bot.guilds],
+            key=lambda item: item["name"].lower(),
+        )
+    return render_template(
+        "access_control.html",
+        user=user,
+        avatar_url=discord_avatar_url(user),
+        allowed=True,
+        bot_guilds=bot_guilds,
+    )
+
+
 
 
 @app.get("/statistics")
@@ -593,7 +605,7 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
-        config = await db(get_guild_settings, guild_id)
+        config = {"daily_reward": DAILY_REWARD}
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
@@ -620,7 +632,7 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
-        config = await db(get_guild_settings, guild_id)
+        config = {"trick_or_treat_min": TRICK_OR_TREAT_MIN, "trick_or_treat_max": TRICK_OR_TREAT_MAX}
         cutoff = now - timedelta(hours=1)
         reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
         updated = await db(
