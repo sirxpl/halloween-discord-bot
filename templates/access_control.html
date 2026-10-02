@@ -25,6 +25,13 @@
     .command-toggle.enabled{background:#163523;color:#86efac;border-color:#245b3b}
     .command-toggle.disabled{background:#3b2020;color:#fca5a5;border-color:#633232}
     .command-empty{display:none;padding:18px;text-align:center;color:var(--muted)}
+    .boost-form{display:grid;grid-template-columns:1.4fr 1.4fr .8fr auto;gap:12px;margin-top:18px}
+    .boost-note{margin-top:12px;color:var(--muted);font-size:12px;line-height:1.5}
+    .boost-list{display:grid;gap:10px;margin-top:18px}
+    .boost-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 15px;border:1px solid var(--border);border-radius:12px;background:#171722}
+    .boost-name{font-weight:800;color:#fbbf24}.boost-multiplier{color:#86efac;font-weight:800}
+    .boost-remove{padding:8px 11px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
+    @media (max-width: 760px){.boost-form{grid-template-columns:1fr}.boost-row{align-items:flex-start;flex-direction:column}.boost-row form{width:100%}}
   </style>
 </head>
 <body>
@@ -135,6 +142,74 @@
         </div>
         {% endfor %}
       </div>
+      {% endif %}
+    </div>
+
+    <div class="access-card">
+      <div class="access-header">
+        <div>
+          <h2>🎁 Daily Reward Boosts</h2>
+          <p class="muted">Give members a larger daily Candy reward when they have a specific Discord role. This affects <strong>daily rewards only</strong> — not Trick-or-Treat, Give, Shop, or other Candy activities.</p>
+        </div>
+        <span class="access-badge">{{ daily_boosts|length }} boost{% if daily_boosts|length != 1 %}s{% endif %}</span>
+      </div>
+
+      {% if bot_guilds %}
+      <form method="get" action="{{ url_for('access_control_page') }}" style="margin-top:18px">
+        <label class="muted" for="boost-guild">Server</label>
+        <select id="boost-guild" name="boost_guild" class="command-search" style="margin-top:7px" onchange="this.form.submit()">
+          {% for guild in bot_guilds %}
+            <option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+
+      {% if boost_roles %}
+      <form method="post" action="{{ url_for('access_control_daily_boost') }}" class="boost-form">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <select name="role_id" class="command-search" style="margin-top:0" required aria-label="Role to receive daily reward boost">
+          <option value="" disabled selected>Select a role...</option>
+          {% for role in boost_roles %}
+            <option value="{{ role.id }}">{{ role.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="multiplier" class="command-search" style="margin-top:0" required aria-label="Daily reward multiplier">
+          <option value="1.25">1.25× — +25%</option>
+          <option value="1.5">1.5× — +50%</option>
+          <option value="2">2× — Double reward</option>
+          <option value="3">3× — Triple reward</option>
+          <option value="4">4× — Quadruple reward</option>
+          <option value="5">5× — 5× reward</option>
+        </select>
+        <button type="submit" class="command-toggle enabled">Save Boost</button>
+      </form>
+      <div class="boost-note">If a member has more than one boosted role, only their <strong>highest matching multiplier</strong> is used. Boosts never stack.</div>
+      {% else %}
+        <p class="muted" style="margin-top:18px">This server has no configurable roles available right now.</p>
+      {% endif %}
+
+      {% if daily_boosts %}
+      <div class="boost-list">
+        {% for boost in daily_boosts %}
+        <div class="boost-row">
+          <div>
+            <div class="boost-name">🎃 {{ boost.role_name }}</div>
+            <div class="server-id">Role ID: {{ boost.role_id }}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="boost-multiplier">{{ boost.multiplier:g }}× daily reward</span>
+            <form method="post" action="{{ url_for('access_control_daily_boost_remove') }}">
+              <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+              <input type="hidden" name="role_id" value="{{ boost.role_id }}">
+              <button type="submit" class="boost-remove">Remove</button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% else %}
+        <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so daily reward boosts cannot be configured.</p>
       {% endif %}
     </div>
 
