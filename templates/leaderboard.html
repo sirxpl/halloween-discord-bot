@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Candy Leaderboard</title>
+  <title>Aureolis • Candy Leaderboard</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -21,7 +21,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
@@ -59,9 +59,9 @@
   </aside>
 <main class="section-main">
   <header class="hero">
-    <div class="eyebrow">🎃 AURELOIS • CANDY ECONOMY</div>
+    <div class="eyebrow">🎃 AUREOLIS • CANDY ECONOMY</div>
     <h1>🏆 Candy Leaderboard</h1>
-    <p>See who has collected the most Candy across the Aurelois Halloween Event.</p>
+    <p>See who has collected the most Candy across the Aureolis Halloween Event.</p>
   </header>
 
   <section class="board">
