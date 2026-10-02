@@ -417,7 +417,7 @@ def leaderboard_page():
             # Existing MongoDB records may not have a stored username yet.
             # If the user is not cached, fetch their Discord account directly
             # through the bot's running event loop instead of showing the ID.
-            if not doc.get("username") and discord_user is None and discord_bot and not discord_bot.is_closed():
+            if discord_user is None and discord_bot and not discord_bot.is_closed():
                 try:
                     future = asyncio.run_coroutine_threadsafe(
                         discord_bot.fetch_user(user_id),
@@ -433,16 +433,25 @@ def leaderboard_page():
                             }},
                         )
                 except Exception:
-                    log.exception("Could not fetch Discord username for %s", user_id)
+                    log.exception("Could not fetch Discord profile for %s", user_id)
+
 
             name = (
                 f"@{doc.get('username')}"
                 if doc.get("username")
                 else (f"@{discord_user.name}" if discord_user else "@Unknown User")
             )
+            avatar_url = None
+            if discord_user:
+                try:
+                    avatar_url = str(discord_user.display_avatar.url)
+                except Exception:
+                    avatar_url = None
+
             leaderboard.append({
                 "name": name,
                 "balance": doc.get("balance", 0) or 0,
+                "avatar_url": avatar_url,
             })
         db_ok = True
     except PyMongoError:
