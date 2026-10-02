@@ -666,6 +666,33 @@ class HalloweenBot(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="buy", description="Buy an item from the Halloween Candy shop.")
+    @app_commands.describe(item="The exact shop item name.")
+    async def buy(self, interaction: discord.Interaction, item: str):
+        if not interaction.guild:
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            return
+        item_data = next((i for i in SHOP_ITEMS if i["name"].lower() == item.lower()), None)
+        if not item_data:
+            choices = ", ".join(i["name"] for i in SHOP_ITEMS)
+            await interaction.response.send_message(f"❌ Item not found. Available items: {choices}", ephemeral=True)
+            return
+        guild_id = interaction.guild.id
+        user_id = interaction.user.id
+        await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
+        purchased = await db(
+            users.find_one_and_update,
+            {"guild_id": guild_id, "user_id": user_id, "balance": {"$gte": item_data["price"]}},
+            {"$inc": {"balance": -item_data["price"]}, "$push": {"inventory": {"name": item_data["name"], "price": item_data["price"], "purchased_at": now_utc()}}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not purchased:
+            current = await db(get_user, guild_id, user_id)
+            balance = current.get("balance", 0) if current else 0
+            await interaction.response.send_message(f"❌ You need **{item_data['price']:,} 🍬** but only have **{balance:,} 🍬**.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🛒 You bought **{item_data['name']}** for **{item_data['price']:,} 🍬**! Your item is now in your inventory.")
+
     @app_commands.command(name="shop", description="View the Halloween Candy shop.")
     async def shop(self, interaction: discord.Interaction):
         embed = discord.Embed(
