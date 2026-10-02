@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Daily Reward</title>
+  <title>Aureolis • Daily Reward</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -27,7 +27,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a><a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>{% endif %}
@@ -64,7 +64,7 @@
   </aside>
 <main class="section-main">
   <header class="hero">
-    <div class="eyebrow">🎃 AURELOIS • CANDY ECONOMY</div>
+    <div class="eyebrow">🎃 AUREOLIS • CANDY ECONOMY</div>
     <h1>🎁 Daily Reward</h1>
     <p>Come back every 24 hours for your daily Candy reward.</p>
   </header>
