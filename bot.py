@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
+from flask_session import Session
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
@@ -54,6 +55,13 @@ app.secret_key = FLASK_SECRET_KEY
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
+app.config["SESSION_TYPE"] = "mongodb"
+app.config["SESSION_MONGODB"] = mongo
+app.config["SESSION_MONGODB_DB"] = db
+app.config["SESSION_MONGODB_COLLECT"] = "web_sessions"
+app.config["SESSION_PERMANENT"] = True
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=31)
+Session(app)
 
 
 @app.get("/")
