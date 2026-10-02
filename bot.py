@@ -327,7 +327,58 @@ def statistics_page():
 
 @app.get("/daily")
 def daily_page():
-    return render_template("daily.html")
+    user = session.get("discord_user")
+    guild = selected_guild() if user else None
+    profile = None
+    next_daily = None
+    if user and guild:
+        profile = users.find_one({"guild_id": int(guild["id"]), "user_id": int(user["id"])})
+        if profile and profile.get("last_daily"):
+            next_daily = profile["last_daily"] + timedelta(hours=24)
+    return render_template(
+        "daily.html",
+        user=user,
+        guild=guild,
+        profile=profile,
+        next_daily=next_daily,
+        daily_reward=DAILY_REWARD,
+    )
+
+
+@app.post("/daily/claim")
+def daily_claim():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild = selected_guild()
+    if not guild:
+        return redirect(url_for("daily_page", error="no_server"))
+
+    guild_id = int(guild["id"])
+    user_id = int(user["id"])
+    now = now_utc()
+    ensure_user(
+        guild_id,
+        user_id,
+        user.get("username"),
+        user.get("global_name") or user.get("username"),
+    )
+    cutoff = now - timedelta(hours=24)
+    updated = users.find_one_and_update(
+        {
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "$or": [
+                {"last_daily": {"$exists": False}},
+                {"last_daily": {"$lte": cutoff}},
+            ],
+        },
+        {"$set": {"last_daily": now}, "$inc": {"balance": DAILY_REWARD}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        return redirect(url_for("daily_page", guild=guild_id, error="cooldown"))
+    return redirect(url_for("daily_page", guild=guild_id, claimed="1"))
 
 
 @app.get("/leaderboard")
