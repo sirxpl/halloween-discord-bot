@@ -756,7 +756,7 @@ def daily_claim():
     if get_member_controls(guild_id, user_id)["blocked_from_candy"]:
         return redirect(url_for("daily_page", guild=guild_id, error="restricted"))
     now = now_utc()
-    ensure_user 
+    ensure_user(
         guild_id,
         user_id,
         user.get("username"),
