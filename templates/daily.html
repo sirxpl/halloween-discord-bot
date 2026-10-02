@@ -17,7 +17,7 @@
     .reward-icon{font-size:64px;margin-bottom:12px}.reward{font-size:38px;font-weight:800;color:#ffb454;margin:8px 0}.cooldown{color:#aaa1b4;margin:8px 0 28px}
     .status{padding:14px 18px;border-radius:14px;background:#17121d;border:1px solid #2d2535;color:#d8d0df;font-size:13px;line-height:1.6}
     .status strong{color:#fff}.button{display:inline-block;margin-top:24px;padding:13px 22px;border-radius:12px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:800;font-size:13px}.button:hover{background:#8b5cf6}
-    .note{margin-top:20px;color:#756d80;font-size:11px;line-height:1.6}
+    .note{margin-top:20px;color:#756d80;font-size:11px;line-height:1.6}.success{margin-top:20px;padding:14px 18px;border-radius:14px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#bbf7d0}.cooldown-box{margin-top:20px}.button{border:0;cursor:pointer;font:inherit}
     @media(max-width:650px){.card{padding:34px 20px}}
   </style>
 </head>
@@ -68,17 +68,37 @@
 
   <section class="card">
     <div class="reward-icon">🍬</div>
-    <div class="reward">+100 Candy</div>
+    <div class="reward">+{{ daily_reward }} Candy</div>
     <div class="cooldown">Available once every 24 hours</div>
-    <div class="status">
-      <strong>Claim your reward in Discord</strong><br>
-      Use the <strong>/daily</strong> slash command in the Aurelois server.
-      Your claim and cooldown are stored in the same MongoDB record used by the bot.
-    </div>
-    <a class="button" href="https://discord.gg/aureolis" target="_blank" rel="noopener">Open Discord →</a>
-    <div class="note">OAuth2 can be added later so this page can identify your Discord account and show your exact cooldown and Candy balance.</div>
+    {% if not user %}
+      <div class="status">
+        <strong>Sign in to claim from the dashboard</strong><br>
+        Your dashboard claim shares the same 24-hour cooldown as the <strong>/daily</strong> Discord command.
+      </div>
+      <a class="button" href="/login">Sign in with Discord →</a>
+    {% elif not guild %}
+      <div class="status">
+        <strong>No server available</strong><br>
+        Your Discord account is not connected to a server where the bot can use the Candy economy.
+      </div>
+    {% else %}
+      <div class="status">
+        <strong>Server: {{ guild.name }}</strong><br>
+        Claims from the dashboard and <strong>/daily</strong> use the same MongoDB reward record, so the cooldown stays synchronized.
+      </div>
+      {% if request.args.get("claimed") %}
+        <div class="success">🎉 Reward claimed! You received <strong>+{{ daily_reward }} 🍬 Candy</strong>.</div>
+      {% elif request.args.get("error") == "cooldown" and next_daily %}
+        <div class="status cooldown-box">⏰ Already claimed. Next reward in <strong id="daily-countdown" data-next="{{ next_daily.timestamp()|int }}">calculating...</strong>.</div>
+      {% else %}
+        <form method="post" action="{{ url_for('daily_claim') }}">
+          <button class="button" type="submit">🎁 Claim Daily Reward</button>
+        </form>
+      {% endif %}
+    {% endif %}
+    <div class="note">The 24-hour cooldown is shared between the dashboard and Discord, so claiming in one place disables the other until the timer expires.</div>
   </section>
 
 </main>
-</body>
+<script>(function(){const el=document.getElementById("daily-countdown");if(!el)return;function tick(){const left=Math.max(0,Number(el.dataset.next)*1000-Date.now());if(!left){el.textContent="ready now";location.reload();return;}const s=Math.floor(left/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=s%60;el.textContent=(h?String(h).padStart(2,"0")+":":"")+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");}tick();setInterval(tick,1000)})();</script></body>
 </html>
