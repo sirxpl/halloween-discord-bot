@@ -1429,3 +1429,19 @@ async def main():
                 wait = max(wait, min(info["retry_after"] + 5, 3600))
             log.warning(
                 "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
+                "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
+                exc, info.get("code"), info.get("headers"), info.get("body")
+            )
+            d.update(
+                state="rate_limited",
+                last_error=f"Discord HTTP 429; retrying in {wait} seconds",
+                retry_until=now_utc() + timedelta(seconds=wait),
+            )
+            await asyncio.sleep(wait)
+            retry_delay = min(max(retry_delay * 2, 30), 3600)
+
+
+if __name__ == "__main__":
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    asyncio.run(main())
