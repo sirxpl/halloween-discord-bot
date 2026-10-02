@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from urllib.parse import urlencode
 import secrets
 import requests
+import re
 
 load_dotenv()
 
@@ -47,6 +48,7 @@ activity_logs = db["activity_logs"]
 logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
+arcane_level_rewards = db["arcane_level_rewards"]
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452}
 
@@ -317,6 +319,10 @@ def get_bot_member(guild_id, user_id):
 
 
 DAILY_REWARD = 100
+ARCANE_BOT_IDS = {1217870452253397082, 437808476106784770}
+ARCANE_LEVEL_BONUS = 500
+ARCANE_LEVEL_PATTERN = re.compile(r"<@!?(\d+)>\s+has reached level\s+\*\*(\d+)\*\*\.\s+GG!$", re.IGNORECASE)
+
 TRICK_OR_TREAT_MIN = 25
 TRICK_OR_TREAT_MAX = 150
 
@@ -1291,6 +1297,10 @@ def add_candy(guild_id: int, user_id: int, amount: int):
 
 
 intents = discord.Intents.default()
+# Arcane level-up rewards read the level-up message, so Message Content is required.
+# Keep this opt-in so the bot does not request the privileged intent until Discord allows it.
+ARCANE_LEVEL_BONUS_ENABLED = os.getenv("ARCANE_LEVEL_BONUS_ENABLED", "false").lower() == "true"
+intents.message_content = ARCANE_LEVEL_BONUS_ENABLED
 
 
 class AccessControlledTree(app_commands.CommandTree):
@@ -1320,6 +1330,60 @@ def create_bot():
 class HalloweenBot(commands.Cog):
     def __init__(self, bot_: commands.Bot):
         self.bot = bot_
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if not ARCANE_LEVEL_BONUS_ENABLED:
+            return
+        if message.guild is None or message.author.id not in ARCANE_BOT_IDS:
+            return
+
+        match = ARCANE_LEVEL_PATTERN.fullmatch((message.content or "").strip())
+        if not match:
+            return
+
+        user_id = int(match.group(1))
+        level = int(match.group(2))
+        guild_id = message.guild.id
+
+        # Use a unique document per guild/member/level so duplicate deliveries
+        # or repeated Arcane test messages cannot award the same level twice.
+        claim = await db(
+            arcane_level_rewards.update_one,
+            {"guild_id": guild_id, "user_id": user_id, "level": level},
+            {
+                "$setOnInsert": {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "level": level,
+                    "bonus": ARCANE_LEVEL_BONUS,
+                    "created_at": now_utc(),
+                }
+            },
+            upsert=True,
+        )
+        if claim.upserted_id is None:
+            return
+
+        await db(ensure_user, guild_id, user_id)
+        updated = await db(add_candy, guild_id, user_id, ARCANE_LEVEL_BONUS)
+        await db(
+            log_activity,
+            "arcane_level_bonus",
+            user_id,
+            f"<@{user_id}>",
+            guild_id,
+            ARCANE_LEVEL_BONUS,
+            {"level": level, "source_bot_id": message.author.id},
+        )
+        log.info(
+            "Awarded %s Candy to user %s for Arcane level %s in guild %s. New balance: %s",
+            ARCANE_LEVEL_BONUS,
+            user_id,
+            level,
+            guild_id,
+            updated.get("balance", 0),
+        )
 
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
