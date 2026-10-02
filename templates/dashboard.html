@@ -38,7 +38,7 @@
         </summary>
         <div class="profile-menu-dropdown">
           <a href="/profile"><span>👤</span> Profile</a>
-          <a href="/settings"><span>⚙️</span> Settings</a>
+          <a href="/access-control"><span>⚙️</span> Settings</a>
           {% if user %}
             <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
           {% else %}
@@ -85,7 +85,7 @@
           <button><b>🍬</b><span><strong>Economy</strong><small>Manage Candy settings</small></span><i>→</i></button>
           <button><b>🛒</b><span><strong>Shop</strong><small>Create and manage items</small></span><i>→</i></button>
           <button><b>🎃</b><span><strong>Events</strong><small>Plan Halloween events</small></span><i>→</i></button>
-          <button><b>⚙️</b><span><strong>Settings</strong><small>Configure your server</small></span><i>→</i></button>
+          <button><b>⚙️</b><span><strong>Access Control</strong><small>Manage dashboard access</small></span><i>→</i></button>
         </div></div>
         <div class="panel"><div class="panel-head"><div><h3>Bot status</h3><p>Live service information</p></div><span class="online{% if not discord_ok %} offline{% endif %}">● {{ bot_status }}</span></div>
           <div class="status-row"><span>Discord</span><strong>{{ discord_status }}</strong></div><div class="status-row"><span>Database</span><strong>{{ db_status }}</strong></div><div class="status-row"><span>Web dashboard</span><strong>Running</strong></div><div class="status-row"><span>Full details</span><strong><a href="/status" style="color:#a78bfa;text-decoration:none">Open status page →</a></strong></div>
