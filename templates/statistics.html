@@ -27,8 +27,11 @@
 
     <a href="/status"><span>📡</span> Status</a>
     <a href="/events"><span>🎃</span> Events</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+    {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
     <a href="/access-control"><span>🛡️</span> Access Control</a>
+    {% endif %}
+{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+
     {% endif %}
   </nav>
   <div class="sidebar-bottom">
