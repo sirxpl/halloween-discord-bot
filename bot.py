@@ -191,10 +191,31 @@ def oauth_callback():
         return "Discord account information could not be loaded.", 502
     me = me_response.json()
     guilds = guild_response.json()
+
+    # Keep the Flask session small enough for a browser cookie. Discord returns
+    # many extra fields for guilds that the dashboard does not need.
+    compact_guilds = [
+        {
+            "id": str(guild.get("id")),
+            "name": guild.get("name", "Unnamed Server"),
+            "permissions": str(guild.get("permissions", "0")),
+        }
+        for guild in guilds
+        if guild.get("id")
+    ]
+
+    # Make the login session persistent and store only the data the dashboard
+    # actually needs. This prevents large Discord guild payloads from causing
+    # the session cookie to be dropped, which can make a successful login look
+    # like the user is still signed out.
+    session.permanent = True
     session["discord_user"] = me
-    session["discord_guilds"] = guilds
-    if guilds:
-        session["selected_guild_id"] = str(guilds[0]["id"])
+    session["discord_guilds"] = compact_guilds
+    if compact_guilds:
+        session["selected_guild_id"] = compact_guilds[0]["id"]
+    else:
+        session.pop("selected_guild_id", None)
+
     return redirect(url_for("profile_page"))
 
 
