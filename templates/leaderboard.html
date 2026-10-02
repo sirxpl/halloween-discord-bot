@@ -15,7 +15,7 @@
     .board{background:rgba(18,14,24,.9);border:1px solid #292130;border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)}
     .board-head{display:grid;grid-template-columns:70px 1fr 180px;padding:17px 22px;color:#756d80;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid #292130}
     .row{display:grid;grid-template-columns:70px 1fr 180px;align-items:center;padding:19px 22px;border-bottom:1px solid #211b27}.row:last-child{border-bottom:0}
-    .rank{font-size:17px;font-weight:800;color:#81798d}.rank.top{color:#ffb454}.player{display:flex;align-items:center;gap:12px}.player .avatar{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#382052,#6b3295);font-weight:800}.name{font-weight:700}.sub{display:block;color:#756d80;font-size:11px;margin-top:3px}.candy{text-align:right;font-weight:800;color:#ffb454}.empty{padding:55px;text-align:center;color:#8f879a}
+    .rank{font-size:17px;font-weight:800;color:#81798d}.rank.top{color:#ffb454}.player{display:flex;align-items:center;gap:12px}.player .avatar{width:38px;height:38px;border-radius:50%;object-fit:cover;display:block;background:linear-gradient(135deg,#382052,#6b3295);font-weight:800}.player .avatar-fallback{display:grid;place-items:center}.name{font-weight:700}.sub{display:block;color:#756d80;font-size:11px;margin-top:3px}.candy{text-align:right;font-weight:800;color:#ffb454}.empty{padding:55px;text-align:center;color:#8f879a}
     @media(max-width:650px){.board-head,.row{grid-template-columns:48px 1fr 105px;padding-left:14px;padding-right:14px}.candy{font-size:13px}}
   </style>
 </head>
@@ -71,7 +71,11 @@
       <div class="row">
         <div class="rank{% if loop.index <= 3 %} top{% endif %}">#{{ loop.index }}</div>
         <div class="player">
-          <div class="avatar">{{ loop.index }}</div>
+          {% if user.avatar_url %}
+            <img class="avatar" src="{{ user.avatar_url }}" alt="{{ user.name }} profile picture">
+          {% else %}
+            <div class="avatar avatar-fallback">{{ loop.index }}</div>
+          {% endif %}
           <div><span class="name">{{ user.name }}</span><span class="sub">Candy collector</span></div>
         </div>
         <div class="candy">{{ "{:,}".format(user.balance) }} 🍬</div>
