@@ -38,7 +38,7 @@
         </summary>
         <div class="profile-menu-dropdown">
           <a href="/profile"><span>👤</span> Profile</a>
-          <a href="/access-control"><span>⚙️</span> Settings</a>
+          <a href="/access-control"><span>🛡️</span> Access Control</a>
           {% if user %}
             <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
           {% else %}
@@ -69,7 +69,7 @@
       </header>
 
       <section class="hero">
-        <div><div class="pill{% if not discord_ok %} pill-off{% endif %}">● {{ bot_status }}</div><h2>Welcome to the Halloween Dashboard</h2><p>Your bot is ready for the spooky season. Configure your economy, events, shop, and server settings here.</p><button class="primary">Explore dashboard →</button></div>
+        <div><div class="pill{% if not discord_ok %} pill-off{% endif %}">● {{ bot_status }}</div><h2>Welcome to the Halloween Dashboard</h2><p>Your bot is ready for the spooky season. Manage your economy, events, shop, and administrator access here.</p><button class="primary">Explore dashboard →</button></div>
         <div class="moon">🌙</div>
       </section>
 
