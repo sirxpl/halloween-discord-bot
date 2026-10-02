@@ -3,19 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Halloween Dashboard</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
-<style>.aurelois-hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px;box-shadow:0 24px 70px rgba(0,0,0,.3)}</style></head>
-<body>
+  <title>Aureolis • Halloween Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261002') }}">
+</head>
+<body class="{% if not user %}guest-dashboard{% endif %}">
   <aside class="sidebar">
-    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
     <nav class="dashboard-nav">
-<a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
-<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a><a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>{% endif %}
-<a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a><a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>{% endif %}<a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a><a class="{% if request.path == '/daily' %}active{% endif %}" href="/daily"><span>🎁</span> Daily Reward</a><a class="{% if request.path == '/halloween-quests' %}active{% endif %}" href="/halloween-quests"><span>👻</span> Halloween Quests</a><a class="{% if request.path == '/statistics' %}active{% endif %}" href="/statistics"><span>📊</span> Statistics</a><a class="{% if request.path == '/announcements' %}active{% endif %}" href="/announcements"><span>📢</span> Announcements</a><a class="{% if request.path == '/rewards' %}active{% endif %}" href="/rewards"><span>🎁</span> Rewards</a><a class="{% if request.path == '/status' %}active{% endif %}" href="/status"><span>📡</span> Status</a><a class="{% if request.path == '/events' %}active{% endif %}" href="/events"><span>🎃</span> Events</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>{% endif %}
-</nav>
+      <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a>
+      <a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>
+      {% endif %}
+      <a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a>
+      <a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>
+      {% endif %}
+      <a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a>
+      <a class="{% if request.path == '/daily' %}active{% endif %}" href="/daily"><span>🎁</span> Daily Reward</a>
+      <a class="{% if request.path == '/halloween-quests' %}active{% endif %}" href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+      <a class="{% if request.path == '/statistics' %}active{% endif %}" href="/statistics"><span>📊</span> Statistics</a>
+      <a class="{% if request.path == '/announcements' %}active{% endif %}" href="/announcements"><span>📢</span> Announcements</a>
+      <a class="{% if request.path == '/rewards' %}active{% endif %}" href="/rewards"><span>🎁</span> Rewards</a>
+      <a class="{% if request.path == '/status' %}active{% endif %}" href="/status"><span>📡</span> Status</a>
+      <a class="{% if request.path == '/events' %}active{% endif %}" href="/events"><span>🎃</span> Events</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>
+      {% endif %}
+    </nav>
     <div class="sidebar-bottom">
       <details class="profile-menu">
         <summary class="profile-mini">
@@ -29,7 +45,6 @@
         </summary>
         <div class="profile-menu-dropdown">
           <a href="/profile"><span>👤</span> Profile</a>
-    
           {% if user %}
             <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
           {% else %}
@@ -42,12 +57,16 @@
 
   <main class="dashboard-main">
     {% if not user %}
-      <section class="panel dashboard-empty">
-        <div class="empty-icon">🎃</div>
-        <div class="eyebrow">WELCOME TO AURELOIS</div>
-        <h1>Your dashboard is empty</h1>
-        <p>Continue with Discord to connect your account and access your server dashboard.</p>
-        <a class="primary" href="/login">Continue with Discord →</a>
+      <section class="guest-card">
+        <div class="guest-icon">🎃</div>
+        <div class="eyebrow">AUREOLIS • HALLOWEEN DASHBOARD</div>
+        <h1>Welcome to Aureolis</h1>
+        <p>You're currently browsing as a guest. Log in with Discord to connect your account and access your server dashboard, Candy progress, events, rewards, and other features.</p>
+        <div class="guest-actions">
+          <a class="primary guest-login" href="/login">Continue with Discord →</a>
+          <a class="guest-home" href="/">Back to Introduction</a>
+        </div>
+        <div class="guest-note"><span>🔒</span> Your dashboard features become available after you sign in.</div>
       </section>
     {% else %}
       <header>
@@ -87,7 +106,8 @@
         </div>
       </section>
 
-      <footer>🎃 Aurelois Halloween Bot <span>•</span> Dashboard preview</footer>
+      <footer>🎃 Aureolis Halloween Bot <span>•</span> Dashboard preview</footer>
     {% endif %}
-  </main></body>
+  </main>
+</body>
 </html>
