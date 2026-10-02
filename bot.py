@@ -853,7 +853,8 @@ class HalloweenBot(commands.Cog):
                 f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, config["daily_reward"])\n        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
+        await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, config["daily_reward"])
+        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
