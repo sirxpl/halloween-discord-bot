@@ -97,8 +97,7 @@ def dashboard():
         "rate_limited": "Rate limited",
         "error": "Offline",
     }
-    discord_status = labels.get(d["state"], "Unknown")
-    user = session.get("discord_user")
+    discord_status = labels.get(d["state"], "Unknown")    user = session.get("discord_user")
     return render_template(
         "dashboard.html",
         total_users=total_users,
@@ -197,8 +196,7 @@ def oauth_callback():
         return "Discord OAuth2 sign-in failed.", 502
     access_token = token.json().get("access_token")
     if not access_token:
-        return "Discord OAuth2 did not return an access token.", 502
-    headers = {"Authorization": f"Bearer {access_token}"}
+        return "Discord OAuth2 did not return an access token.", 502    headers = {"Authorization": f"Bearer {access_token}"}
     me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
     guild_response = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=10)
     if not me_response.ok or not guild_response.ok:
@@ -299,7 +297,6 @@ def get_member_controls(guild_id, user_id):
     record = member_controls.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) or {}
     return {"blocked_from_candy": bool(record.get("blocked_from_candy", False)), "leaderboard_excluded": bool(record.get("leaderboard_excluded", False))}
 
-
 def set_member_control(guild_id, user_id, field, enabled, updated_by=None):
     if field not in {"blocked_from_candy", "leaderboard_excluded"}:
         raise ValueError("Unsupported member control.")
@@ -396,7 +393,6 @@ def economy_page():
     except PyMongoError:
         total_users, total_candy, recent = 0, 0, []
     return render_template("economy.html", config=config, total_users=total_users, total_candy=total_candy, recent=recent)
-
 
 @app.post("/economy/settings")
 def economy_settings():
@@ -497,8 +493,7 @@ def profile_page():
     profile = None
     rank = None
     inventory_value = 0
-    next_daily = None
-    if guild:
+    next_daily = None    if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
         if profile:
@@ -533,35 +528,73 @@ def users_page():
     if not is_admin(user["id"]):
         return "Forbidden", 403
 
-    guilds = list(session.get("discord_guilds", []))
-    guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
+    # Users are tracked globally across every server. A record exists here
+    # whenever someone has interacted with the bot's economy features.
     search = request.args.get("q", "").strip()
-    selected = next((g for g in guilds if str(g.get("id")) == str(guild_id)), None)
-
     query = {}
-    if guild_id and str(guild_id).isdigit():
-        query["guild_id"] = int(guild_id)
     if search:
-        terms = [{"username": {"$regex": search, "$options": "i"}},
-                 {"display_name": {"$regex": search, "$options": "i"}}]
+        terms = [
+            {"username": {"$regex": search, "$options": "i"}},
+            {"display_name": {"$regex": search, "$options": "i"}},
+        ]
         if search.isdigit():
             terms.append({"user_id": int(search)})
         query["$or"] = terms
 
-    records = list(users.find(query).sort("balance", -1).limit(100))
-    control_query = {"guild_id": int(guild_id)} if guild_id and str(guild_id).isdigit() else {}
-    control_map = {
-        (int(item["guild_id"]), int(item["user_id"])): item
-        for item in member_controls.find(control_query).limit(500)
-    }
-    for record in records:
-        control = control_map.get((int(record.get("guild_id", 0)), int(record.get("user_id", 0))), {})
-        record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
-        record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
+    records = list(users.find(query).sort("balance", -1).limit(500))
 
-    return render_template("users.html", user=user, avatar_url=discord_avatar_url(user),
-                           guilds=guilds, selected_guild=selected, guild_id=str(guild_id),
-                           search=search, users=records)
+    bot = BOT.get("instance")
+    guild_names = {}
+    if bot is not None:
+        guild_names = {int(guild.id): guild.name for guild in bot.guilds}
+
+    # Group server-specific records into one global user entry.
+    grouped = {}
+    for record in records:
+        uid = int(record.get("user_id", 0))
+        if not uid:
+            continue
+        guild_id = int(record.get("guild_id", 0))
+        record["server_name"] = guild_names.get(guild_id)
+        entry = grouped.setdefault(uid, {
+            "user_id": uid,
+            "username": record.get("username"),
+            "display_name": record.get("display_name"),
+            "total_balance": 0,
+            "servers": [],
+        })
+        entry["username"] = record.get("username") or entry["username"]
+        entry["display_name"] = record.get("display_name") or entry["display_name"]
+        entry["total_balance"] += int(record.get("balance", 0) or 0)
+        entry["servers"].append(record)
+
+    global_users = sorted(
+        grouped.values(),
+        key=lambda item: (-item["total_balance"], (item.get("display_name") or item.get("username") or "").lower())
+    )[:100]
+
+    for entry in global_users:
+        server_ids = [int(record.get("guild_id", 0)) for record in entry["servers"] if record.get("guild_id")]
+        control_map = {
+            (int(item["guild_id"]), int(item["user_id"])): item
+            for item in member_controls.find(
+                {"user_id": entry["user_id"], "guild_id": {"$in": server_ids}}
+            )
+        }
+        for record in entry["servers"]:
+            control = control_map.get(
+                (int(record.get("guild_id", 0)), entry["user_id"]), {}
+            )
+            record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
+            record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
+
+    return render_template(
+        "users.html",
+        user=user,
+        avatar_url=discord_avatar_url(user),
+        search=search,
+        users=global_users,
+    )
 
 
 @app.post("/users/candy")
@@ -590,13 +623,13 @@ def users_candy():
                 return_document=ReturnDocument.AFTER,
             )
             if result is None:
-                return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), error="subtract"))
+                return redirect(url_for("users_page", q=request.form.get("q", ""), error="subtract"))
         log_activity("admin_add" if action == "add" else "admin_subtract",
                      user_id=member_id, guild_id=guild_id, amount=amount,
                      details={"changed_by": user["id"], "source": "web_users"})
-        return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), saved=action))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", guild=request.form.get("guild_id", ""), q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
 
 
 @app.post("/users/control")
@@ -614,9 +647,9 @@ def users_control():
         set_member_control(guild_id, member_id, field, enabled, user["id"])
         log_activity("member_control", user_id=member_id, guild_id=guild_id,
                      details={"control": field, "enabled": enabled, "source": "web_users", "changed_by": user["id"]})
-        return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), saved="control"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), saved="control"))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", guild=request.form.get("guild_id", ""), q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
 
 
 @app.get("/access-control")
@@ -697,8 +730,7 @@ def access_control_command(command_name):
         return redirect(url_for("access_control_page"))
 
     command = next(
-        (item for item in bot.tree.get_commands() if item.name == command_name),
-        None,
+        (item for item in bot.tree.get_commands() if item.name == command_name),        None,
     )
     if command is None:
         return redirect(url_for("access_control_page"))
@@ -797,8 +829,7 @@ def leaderboard_page():
             user_id = doc.get("user_id")
             discord_user = discord_bot.get_user(user_id) if discord_bot else None
 
-            # Existing MongoDB records may not have a stored username yet.
-            # If the user is not cached, fetch their Discord account directly
+            # Existing MongoDB records may not have a stored username yet.            # If the user is not cached, fetch their Discord account directly
             # through the bot's running event loop instead of showing the ID.
             if discord_user is None and discord_bot and not discord_bot.is_closed():
                 try:
@@ -897,8 +928,7 @@ def fmt_dt(dt):
 
 def fmt_duration(seconds):
     seconds = int(max(seconds, 0))
-    days, rem = divmod(seconds, 86400)
-    hours, rem = divmod(rem, 3600)
+    days, rem = divmod(seconds, 86400)    hours, rem = divmod(rem, 3600)
     minutes, secs = divmod(rem, 60)
     if days:
         return f"{days}d {hours}h {minutes}m"
@@ -997,8 +1027,7 @@ def build_status():
             },
         },
         "database": {"ok": db_ok, "latency_ms": db_ms, "error": db_error},
-        "web": {"ok": True},
-    }
+        "web": {"ok": True},    }
 
 
 def get_user(guild_id: int, user_id: int):
@@ -1097,8 +1126,7 @@ class HalloweenBot(commands.Cog):
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
-            {"guild_id": guild_id, "user_id": user_id,
-             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
+            {"guild_id": guild_id, "user_id": user_id,             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
             {"$set": {"last_daily": now}, "$inc": {"balance": config["daily_reward"]}},
             return_document=ReturnDocument.AFTER,
         )
@@ -1197,8 +1225,7 @@ class HalloweenBot(commands.Cog):
             await interaction.response.send_message("🚫 That member is not allowed to participate in Candy activities in this server.", ephemeral=True)
             return
         if member.id == interaction.user.id:
-            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)
-            return
+            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)            return
         if amount <= 0:
             await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
             return
@@ -1297,7 +1324,6 @@ class HalloweenBot(commands.Cog):
             )
         embed.set_footer(text="Shop catalog • More purchasing features can be added later")
         await interaction.response.send_message(embed=embed)
-
     @app_commands.command(name="profile", description="View your Candy profile.")
     async def profile(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -1398,32 +1424,3 @@ async def main():
                 wait = max(wait, min(info["retry_after"] + 5, 3600))
             log.warning(
                 "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
-                info["label"], getattr(exc, "code", None), info["headers"], info["body"],
-            )
-            log.warning("Waiting %ss before retry #%s.", int(wait), d["attempts"] + 1)
-            d.update(
-                state="rate_limited",
-                rate_limit={**info, "at": now_utc()},
-                last_error=info["label"],
-                retry_until=now_utc() + timedelta(seconds=wait),
-            )
-            await asyncio.sleep(wait)
-            retry_delay = min(retry_delay * 2, 600)
-        except discord.LoginFailure:
-            await bot.close()
-            d.update(state="error", last_error="Invalid Discord token")
-            await park_forever("Discord rejected DISCORD_TOKEN (invalid token).")
-        except discord.PrivilegedIntentsRequired:
-            await bot.close()
-            d.update(state="error", last_error="Privileged intents not enabled")
-            await park_forever("A privileged intent is required but not enabled in the Developer Portal.")
-        except Exception as exc:
-            await bot.close()
-            d.update(state="error", last_error=exc.__class__.__name__)
-            log.exception("Unexpected error while running the bot")
-            await park_forever("Unexpected error.")
-
-
-if __name__ == "__main__":
-    threading.Thread(target=run_web_server, daemon=True).start()
-    asyncio.run(main())
