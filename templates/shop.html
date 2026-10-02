@@ -47,10 +47,16 @@
         <h2>{{ item.name.split(' ', 1)[1] }}</h2>
         <div class="desc">{{ item.description }}</div>
         <span class="price">🍬 {{ "{:,}".format(item.price) }}</span>
+        {% if session.get("discord_user") %}
+        <form method="post" action="{{ url_for('buy_item', item_name=item.name) }}" style="margin-top:16px"><button class="button" type="submit">Buy item</button></form>
+        {% else %}
+        <div style="margin-top:16px"><a class="button" href="/login">Login to buy</a></div>
+        {% endif %}
       </article>
       {% endfor %}
     </section>
-    <div class="note">🛍️ The catalog is live in both the website and <strong>/shop</strong> Discord command. Actual item purchasing can be connected to the inventory system when we build the rewards/purchase flow.</div>
+    <div class="note">🛍️ Purchases now deduct Candy and add the item to your MongoDB inventory. You can buy here after signing in with Discord or use <strong>/buy</strong> in Discord.</div>
+{% if request.args.get("error") == "not_enough" %}<div class="note" style="border-color:#ef444466;color:#fca5a5">❌ You do not have enough Candy for that item.</div>{% endif %}
     <div class="cta"><a class="button" href="https://discord.gg/aureolis">🎃 Join Aurelois</a></div>
     <div class="footer">Aurelois Halloween Bot • Candy Shop</div>
   </main>
