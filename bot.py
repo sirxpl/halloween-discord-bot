@@ -931,7 +931,8 @@ def fmt_dt(dt):
 
 def fmt_duration(seconds):
     seconds = int(max(seconds, 0))
-    days, rem = divmod(seconds, 86400)    hours, rem = divmod(rem, 3600)
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
     minutes, secs = divmod(rem, 60)
     if days:
         return f"{days}d {hours}h {minutes}m"
