@@ -97,7 +97,8 @@ def dashboard():
         "rate_limited": "Rate limited",
         "error": "Offline",
     }
-    discord_status = labels.get(d["state"], "Unknown")    user = session.get("discord_user")
+    discord_status = labels.get(d["state"], "Unknown")
+    user = session.get("discord_user")
     return render_template(
         "dashboard.html",
         total_users=total_users,
