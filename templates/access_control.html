@@ -197,7 +197,7 @@
             <div class="server-id">Role ID: {{ boost.role_id }}</div>
           </div>
           <div style="display:flex;align-items:center;gap:12px">
-            <span class="boost-multiplier">{{ boost.multiplier:g }}× daily reward</span>
+            <span class="boost-multiplier">{{ '%.2f'|format(boost.multiplier|float) }}× daily reward</span>
             <form method="post" action="{{ url_for('access_control_daily_boost_remove') }}">
               <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
               <input type="hidden" name="role_id" value="{{ boost.role_id }}">
