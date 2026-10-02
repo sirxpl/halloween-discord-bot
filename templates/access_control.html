@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aurelois • Access Control</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261002') }}">
+  <style>
+    .access-wrap{max-width:1000px;margin:auto}
+    .access-card{margin-top:22px;padding:24px;border:1px solid var(--border);border-radius:18px;background:rgba(18,18,28,.9)}
+    .access-header{display:flex;justify-content:space-between;gap:20px;align-items:center}
+    .access-badge{padding:7px 10px;border-radius:999px;background:#163523;color:#86efac;font-size:11px}
+    .server-list{display:grid;gap:10px;margin-top:18px}
+    .server-row{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:15px;border:1px solid var(--border);border-radius:12px;background:#171722}
+    .server-name{font-weight:700}.server-id,.muted{color:var(--muted);font-size:11px;margin-top:4px}
+    .server-count{color:#c4b5fd;font-size:11px}
+    .denied{color:#fca5a5}
+  </style>
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <nav class="dashboard-nav">
+    <a href="/dashboard"><span>⌂</span> Overview</a>
+    <a href="#"><span>🍬</span> Economy</a>
+    <a href="/shop"><span>🛒</span> Shop</a>
+    <a href="/inventory"><span>🎒</span> Inventory</a>
+    <a href="#"><span>👥</span> Users</a>
+    <a href="/leaderboard"><span>🏆</span> Leaderboard</a>
+    <a href="/daily"><span>🎁</span> Daily Reward</a>
+    <a href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+    <a href="/statistics"><span>📊</span> Statistics</a>
+    <a href="/announcements"><span>📢</span> Announcements</a>
+    <a href="/rewards"><span>🎁</span> Rewards</a>
+    <a href="#"><span>📋</span> Logging</a>
+    <a href="/status"><span>📡</span> Status</a>
+    <a href="/events"><span>🎃</span> Events</a>
+  </nav>
+  <div class="sidebar-bottom">
+    <a href="/profile"><span>👤</span> Profile</a>
+    <a href="/access-control"><span>🛡️</span> Access Control</a>
+    <div class="profile-mini">
+      {% if user %}
+        {% if avatar_url %}<img class="avatar" src="{{ avatar_url }}" alt="Discord profile picture">{% else %}<div class="avatar">{{ (user.get('global_name') or user.get('username') or '?')[:1].upper() }}</div>{% endif %}
+        <div><strong>{{ user.get('global_name') or user.get('username') }}</strong><span>@{{ user.get('username') }}</span></div>
+      {% else %}
+        <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
+      {% endif %}
+    </div>
+  </div>
+</aside>
+<main class="section-main access-wrap">
+  <div class="eyebrow">AURELOIS • ADMIN CONTROL</div>
+  <h1>🛡️ Access Control</h1>
+  <p class="muted">Manage dashboard access and view the Discord servers where this bot is currently installed.</p>
+  {% if not allowed %}
+    <div class="access-card"><h2>Access denied</h2><p class="denied">Your Discord account is not on the Aurelois admin allowlist.</p></div>
+  {% else %}
+    <div class="access-card">
+      <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
+    </div>
+    <div class="access-card">
+      <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
+      {% if bot_guilds %}
+        <div class="server-list">
+          {% for guild in bot_guilds %}
+            <div class="server-row">
+              <div><div class="server-name">🎃 {{ guild.name }}</div><div class="server-id">Server ID: {{ guild.id }}</div></div>
+              <div class="server-count">{{ guild.member_count }} members</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">The bot is not connected to any servers right now.</p>
+      {% endif %}
+    </div>
+  {% endif %}
+</main>
+</body>
+</html>
