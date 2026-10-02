@@ -44,6 +44,7 @@ users = db["users"]
 command_access = db["command_access"]
 economy_config = db["economy_config"]
 activity_logs = db["activity_logs"]
+logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 
 ADMIN_USER_IDS = {777341204047331348}
@@ -308,16 +309,68 @@ def set_member_control(guild_id, user_id, field, enabled, updated_by=None):
     }}, upsert=True)
 
 
+LOG_CATEGORIES = ("economy", "member_activity", "shop", "admin", "errors", "system")
+
+
+def get_logging_config(guild_id):
+    record = logging_config.find_one({"_id": str(guild_id)}) or {}
+    return {"mode": record.get("mode", "simple"), "main": record.get("main", {"type": "channel", "channel_id": ""}),
+            "advanced": record.get("advanced", {}), "updated_at": record.get("updated_at")}
+
+
+def save_logging_config(guild_id, mode, main, advanced):
+    logging_config.update_one({"_id": str(guild_id)},
+        {"$set": {"guild_id": int(guild_id), "mode": mode, "main": main, "advanced": advanced, "updated_at": now_utc()}},
+        upsert=True)
+
+
+def log_category(action):
+    if action in {"daily", "trick_or_treat", "give", "web_buy"}: return "economy"
+    if action == "buy": return "shop"
+    if action in {"admin_add", "admin_subtract"}: return "admin"
+    if action == "member_control": return "member_activity"
+    if action.startswith("error"): return "errors"
+    return "system"
+
+
+async def _send_discord_log(guild_id, action, username, amount, details):
+    cfg = get_logging_config(guild_id)
+    category = log_category(action)
+    destination = cfg["advanced"].get(category) if cfg["mode"] == "advanced" else None
+    if not destination: destination = cfg["main"]
+    if not destination or not destination.get("type"): return
+    message = f"**{action.replace('_', ' ').title()}**"
+    if username: message += f" • {username}"
+    if amount is not None: message += f" • {amount:,} 🍬"
+    if details: message += f"\nDetails: {str(details)[:900]}"
+    try:
+        if destination["type"] == "webhook":
+            requests.post(destination.get("url", ""), json={"content": message}, timeout=8)
+        elif destination["type"] == "channel":
+            bot = BOT.get("instance")
+            channel = bot.get_channel(int(destination.get("channel_id", 0))) if bot else None
+            if channel: await channel.send(message)
+    except Exception:
+        log.exception("Could not deliver activity log to Discord.")
+
+
+def queue_discord_log(guild_id, action, username, amount, details):
+    if not guild_id: return
+    bot = BOT.get("instance")
+    if not bot or bot.is_closed(): return
+    try:
+        asyncio.run_coroutine_threadsafe(_send_discord_log(guild_id, action, username, amount, details), bot.loop)
+    except Exception:
+        log.exception("Could not queue Discord activity log.")
+
+
 def log_activity(action, user_id=None, username=None, guild_id=None, amount=None, details=None):
     activity_logs.insert_one({
-        "action": action,
-        "user_id": int(user_id) if user_id is not None else None,
-        "username": username,
-        "guild_id": int(guild_id) if guild_id is not None else None,
-        "amount": amount,
-        "details": details,
-        "created_at": now_utc(),
+        "action": action, "user_id": int(user_id) if user_id is not None else None,
+        "username": username, "guild_id": int(guild_id) if guild_id is not None else None,
+        "amount": amount, "details": details, "created_at": now_utc(),
     })
+    queue_discord_log(guild_id, action, username, amount, details)
 
 
 def set_command_enabled(command_name, enabled):
@@ -372,8 +425,67 @@ def logging_page():
         return redirect(url_for("login"))
     if not is_admin(user["id"]):
         return "Forbidden", 403
+    guilds = list(session.get("discord_guilds", []))
+    guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
     logs = list(activity_logs.find({}).sort("created_at", -1).limit(100))
-    return render_template("logging.html", logs=logs)
+    config = get_logging_config(guild_id) if guild_id else {"mode": "simple", "main": {"type": "channel", "channel_id": ""}, "advanced": {}}
+    bot = BOT.get("instance")
+    channels = []
+    if bot and not bot.is_closed() and guild_id:
+        guild = bot.get_guild(int(guild_id))
+        if guild: channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
+    return render_template("logging.html", logs=logs, logging_config=config, logging_guilds=guilds,
+                           logging_guild_id=str(guild_id), logging_channels=channels, log_categories=LOG_CATEGORIES)
+
+
+@app.post("/logging/settings")
+def logging_settings():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        mode = request.form.get("mode", "simple")
+        if mode not in {"simple", "advanced"}: raise ValueError
+        typ = request.form.get("destination_type", "channel")
+        if typ == "webhook":
+            url = request.form.get("webhook_url", "").strip()
+            if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
+            main = {"type": "webhook", "url": url}
+        else:
+            cid = request.form.get("channel_id", "").strip()
+            if not cid.isdigit(): raise ValueError
+            main = {"type": "channel", "channel_id": cid}
+        advanced = {}
+        for category in LOG_CATEGORIES:
+            ctype = request.form.get(f"{category}_type", "inherit")
+            if ctype == "channel":
+                cid = request.form.get(f"{category}_channel_id", "").strip()
+                if not cid.isdigit(): raise ValueError
+                advanced[category] = {"type": "channel", "channel_id": cid}
+            elif ctype == "webhook":
+                url = request.form.get(f"{category}_webhook_url", "").strip()
+                if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
+                advanced[category] = {"type": "webhook", "url": url}
+        save_logging_config(guild_id, mode, main, advanced)
+        return redirect(url_for("logging_page", guild=guild_id, saved="1"))
+    except (TypeError, ValueError):
+        return redirect(url_for("logging_page", guild=request.form.get("guild_id", ""), error="invalid"))
+
+
+@app.post("/logging/test")
+def logging_test():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id = request.form.get("guild_id", "")
+    try:
+        bot = BOT.get("instance")
+        if not bot or bot.is_closed(): raise RuntimeError
+        asyncio.run_coroutine_threadsafe(_send_discord_log(int(guild_id), "logging_test", user.get("username"), None, {"test": True}), bot.loop)
+        return redirect(url_for("logging_page", guild=guild_id, tested="1"))
+    except Exception:
+        return redirect(url_for("logging_page", guild=guild_id, error="test"))
 
 
 @app.get("/profile")
