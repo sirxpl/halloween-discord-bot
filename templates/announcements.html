@@ -30,24 +30,33 @@
     <a href="/events"><span>🎃</span> Events</a>
   </nav>
   <div class="sidebar-bottom">
-    <a href="/profile"><span>👤</span> Profile</a>
-    <a href="/access-control"><span>⚙️</span> Settings</a>
-    <div class="profile-mini">
-      {% set sidebar_user = session.get('discord_user') %}
-      {% if sidebar_user %}
-        {% if sidebar_user.get('avatar') %}
-          <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ sidebar_user.get('id') }}/{{ sidebar_user.get('avatar') }}.png?size=64" alt="Discord profile picture">
-        {% else %}
-          <div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>
-        {% endif %}
-        <div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
-      {% else %}
-        <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
-      {% endif %}
-      <span class="dots">•••</span>
+      <details class="profile-menu">
+        <summary class="profile-mini">
+          {% set sidebar_user = session.get('discord_user') %}
+          {% if sidebar_user %}
+            {% if sidebar_user.get('avatar') %}
+              <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ sidebar_user.get('id') }}/{{ sidebar_user.get('avatar') }}.png?size=64" alt="Discord profile picture">
+            {% else %}
+              <div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>
+            {% endif %}
+            <div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
+          {% else %}
+            <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
+          {% endif %}
+          <span class="dots">•••</span>
+        </summary>
+        <div class="profile-menu-dropdown">
+          <a href="/profile"><span>👤</span> Profile</a>
+          <a href="/access-control"><span>🛡️</span> Access Control</a>
+          {% if sidebar_user %}
+            <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
+          {% else %}
+            <a href="/login"><span>🔐</span> Log In</a>
+          {% endif %}
+        </div>
+      </details>
     </div>
-  </div>
-</aside>
+  </aside>
   <main class="section-main wrap">
     <section class="hero">
       <div class="eyebrow">🎃 AURELOIS • HALLOWEEN</div>
