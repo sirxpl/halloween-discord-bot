@@ -88,7 +88,7 @@ def dashboard():
         "dashboard.html",
         total_users=total_users,
         total_candy=total_candy,
-        command_count=7,
+        command_count=8,
         bot_status=discord_status if d["state"] != "online" else "Online",
         discord_status=discord_status,
         db_status=db_status,
