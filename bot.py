@@ -302,7 +302,7 @@ def log_activity(action, user_id=None, username=None, guild_id=None, amount=None
         "amount": amount,
         "details": details,
         "created_at": now_utc(),
-    )
+    })
 
 
 def set_command_enabled(command_name, enabled):
