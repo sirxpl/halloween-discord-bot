@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Halloween Quests</title>
+  <title>Aureolis • Halloween Quests</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
   <style>
     *{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,sans-serif;background:#0b0812;color:#f7f3ff;min-height:100vh}
@@ -17,7 +17,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a><a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>{% endif %}
@@ -57,7 +57,7 @@
       <div class="eyebrow">HALLOWEEN • QUEST BOARD</div>
       <h1>🎃 Halloween Quests</h1>
       <p>Complete spooky challenges, earn Candy, and build your Halloween event progress. Quest tracking and rewards can be connected to the bot economy as the event grows.</p>
-      <a class="btn" href="https://discord.gg/aureolis">Join Aurelois →</a>
+      <a class="btn" href="https://discord.gg/aureolis">Join Aureolis →</a>
     </section>
     <section class="grid">
       <article class="card">
