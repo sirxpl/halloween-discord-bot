@@ -23,3 +23,14 @@ footer{color:#555568;font-size:10px;text-align:center;padding:28px}footer span{p
 .sidebar::-webkit-scrollbar{width:7px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar::-webkit-scrollbar-thumb{background:#4b3b63;border-radius:99px}.sidebar::-webkit-scrollbar-thumb:hover{background:#665080}
 @media(max-width:900px){.sidebar{width:70px;flex-basis:70px}.brand>div:not(.brand-mark),.dashboard-nav a:not(.active)::after,.profile-mini div:not(.avatar),.dots{display:none}.dashboard-nav a{justify-content:center}.brand{padding:0 0 30px}.brand-mark{margin:auto}.dashboard-main{width:auto}.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.guest-dashboard .dashboard-main{padding:30px}}
 @media(max-width:600px){.stats,.actions{grid-template-columns:1fr}.hero .moon{display:none}.dashboard-main{padding:18px}.header-actions{display:none}.guest-dashboard .dashboard-main{padding:18px}.guest-card{padding:48px 24px;border-radius:20px}.guest-actions{flex-direction:column}.guest-login,.guest-home{width:100%;max-width:300px}}
+
+
+/* Guest mode: show a clean standalone login screen with no dashboard chrome. */
+body.guest-dashboard{display:block;min-height:100vh;overflow-x:hidden}
+.guest-dashboard .sidebar{display:none}
+.guest-dashboard .dashboard-main{width:100%;max-width:none;margin:0;min-height:100vh;padding:32px}
+.guest-dashboard .guest-card{margin:auto}
+@media(max-width:600px){
+  .guest-dashboard .dashboard-main{padding:16px}
+  .guest-dashboard .guest-card{width:100%;min-height:calc(100vh - 32px);display:flex;flex-direction:column;justify-content:center}
+}
