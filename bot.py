@@ -1228,7 +1228,8 @@ class HalloweenBot(commands.Cog):
             await interaction.response.send_message("🚫 That member is not allowed to participate in Candy activities in this server.", ephemeral=True)
             return
         if member.id == interaction.user.id:
-            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)            return
+            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)
+            return
         if amount <= 0:
             await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
             return
