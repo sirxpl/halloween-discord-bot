@@ -41,6 +41,7 @@ if not FLASK_SECRET_KEY:
 mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
 db = mongo["halloween_bot"]
 users = db["users"]
+command_access = db["command_access"]
 
 ADMIN_USER_IDS = {777341204047331348}
 
@@ -262,6 +263,19 @@ def is_admin(user_id):
     return int(user_id) in ADMIN_USER_IDS
 
 
+def is_command_enabled(command_name):
+    record = command_access.find_one({"command_name": command_name})
+    return record is None or record.get("enabled", True)
+
+
+def set_command_enabled(command_name, enabled):
+    command_access.update_one(
+        {"command_name": command_name},
+        {"$set": {"command_name": command_name, "enabled": bool(enabled), "updated_at": now_utc()}},
+        upsert=True,
+    )
+
+
 @app.get("/profile")
 def profile_page():
     user = session.get("discord_user")
@@ -323,8 +337,11 @@ def access_control_page():
             key=lambda item: item["name"].lower(),
         )
         slash_commands = sorted(
-            [{"name": command.name, "description": command.description or "No description available."}
-             for command in bot.tree.get_commands()],
+            [{
+                "name": command.name,
+                "description": command.description or "No description available.",
+                "enabled": is_command_enabled(command.name),
+            } for command in bot.tree.get_commands()],
             key=lambda item: item["name"].lower(),
         )
     return render_template(
@@ -337,6 +354,28 @@ def access_control_page():
     )
 
 
+@app.post("/access-control/command/<command_name>")
+def access_control_command(command_name):
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+
+    bot = BOT["instance"]
+    if bot is None or bot.is_closed():
+        return redirect(url_for("access_control_page"))
+
+    command = next(
+        (item for item in bot.tree.get_commands() if item.name == command_name),
+        None,
+    )
+    if command is None:
+        return redirect(url_for("access_control_page"))
+
+    enabled = request.form.get("enabled") == "1"
+    set_command_enabled(command.name, enabled)
+    return redirect(url_for("access_control_page"))
 
 
 @app.get("/statistics")
@@ -674,17 +713,6 @@ class HalloweenBot(commands.Cog):
     def __init__(self, bot_: commands.Bot):
         self.bot = bot_
 
-    @app_commands.command(name="switchoff", description="Switch the Candy Bot off.")
-    async def switchoff(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("🎃 This command can only be used in a server.", ephemeral=True)
-            return
-        if not is_admin(interaction.user.id):
-            await interaction.response.send_message("❌ You are not authorized to switch off the bot.", ephemeral=True)
-            return
-        await interaction.response.send_message("🛑 **Candy Bot is switching off.** The bot will stop responding until the process is restarted.", ephemeral=True)
-        await self.bot.close()
-
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -870,6 +898,19 @@ class HalloweenBot(commands.Cog):
 
 async def setup_bot(bot):
     await bot.add_cog(HalloweenBot(bot))
+
+    @bot.tree.interaction_check
+    async def command_access_check(interaction: discord.Interaction):
+        command = interaction.command
+        if command is None:
+            return True
+        if await db(is_command_enabled, command.name):
+            return True
+        await interaction.response.send_message(
+            f"🚫 **/{command.name}** is currently disabled by the bot administrator.",
+            ephemeral=True,
+        )
+        return False
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
