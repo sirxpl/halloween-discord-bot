@@ -197,7 +197,8 @@ def oauth_callback():
         return "Discord OAuth2 sign-in failed.", 502
     access_token = token.json().get("access_token")
     if not access_token:
-        return "Discord OAuth2 did not return an access token.", 502    headers = {"Authorization": f"Bearer {access_token}"}
+        return "Discord OAuth2 did not return an access token.", 502
+    headers = {"Authorization": f"Bearer {access_token}"}
     me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
     guild_response = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=10)
     if not me_response.ok or not guild_response.ok:
