@@ -84,6 +84,7 @@ def dashboard():
         "error": "Offline",
     }
     discord_status = labels.get(d["state"], "Unknown")
+    user = session.get("discord_user")
     return render_template(
         "dashboard.html",
         total_users=total_users,
@@ -93,6 +94,8 @@ def dashboard():
         discord_status=discord_status,
         db_status=db_status,
         discord_ok=d["state"] == "online",
+        user=user,
+        avatar_url=discord_avatar_url(user),
     )
 
 
