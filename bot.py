@@ -667,6 +667,17 @@ class HalloweenBot(commands.Cog):
     def __init__(self, bot_: commands.Bot):
         self.bot = bot_
 
+    @app_commands.command(name="switchoff", description="Switch the Candy Bot off.")
+    async def switchoff(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("🎃 This command can only be used in a server.", ephemeral=True)
+            return
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("❌ You are not authorized to switch off the bot.", ephemeral=True)
+            return
+        await interaction.response.send_message("🛑 **Candy Bot is switching off.** The bot will stop responding until the process is restarted.", ephemeral=True)
+        await self.bot.close()
+
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
         if not interaction.guild:
