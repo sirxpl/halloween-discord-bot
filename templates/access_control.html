@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Access Control</title>
+  <title>Aureolis • Access Control</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261002') }}">
   <style>
     .access-wrap{max-width:1000px;margin:auto}
@@ -29,7 +29,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
@@ -80,11 +80,11 @@
     </div>
   </aside>
 <main class="section-main access-wrap">
-  <div class="eyebrow">AURELOIS • ADMIN CONTROL</div>
+  <div class="eyebrow">AUREOLIS • ADMIN CONTROL</div>
   <h1>🛡️ Access Control</h1>
   <p class="muted">Control which Discord slash commands are enabled, and view the servers where this bot is currently installed.</p>
   {% if not allowed %}
-    <div class="access-card"><h2>Access denied</h2><p class="denied">Your Discord account is not on the Aurelois admin allowlist.</p></div>
+    <div class="access-card"><h2>Access denied</h2><p class="denied">Your Discord account is not on the Aureolis admin allowlist.</p></div>
   {% else %}
     <div class="access-card">
       <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
