@@ -23,7 +23,18 @@
 <a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>
 {% endif %}
 </nav>
-<div class="sidebar-bottom"><details class="profile-menu"><summary class="profile-mini"><div class="avatar">🎃</div><div><strong>Admin</strong><span>Economy Control</span></div><span class="dots">•••</span></summary><div class="profile-menu-dropdown"><a href="/profile"><span>👤</span> Profile</a><a href="/access-control"><span>🛡️</span> Access Control</a><a class="logout" href="/logout"><span>🚪</span> Log Out</a></div></details></div></aside>
+<div class="sidebar-bottom">
+<details class="profile-menu">
+<summary class="profile-mini">
+{% set sidebar_user = session.get('discord_user') %}
+{% if sidebar_user %}
+{% if sidebar_user.get('avatar') %}<img class="avatar" src="https://cdn.discordapp.com/avatars/{{ sidebar_user.get('id') }}/{{ sidebar_user.get('avatar') }}.png?size=64" alt="Discord profile picture">{% else %}<div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>{% endif %}
+<div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
+{% else %}<div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>{% endif %}
+<span class="dots">•••</span></summary>
+<div class="profile-menu-dropdown"><a href="/profile"><span>👤</span> Profile</a>
+{% if sidebar_user %}<a class="logout" href="/logout"><span>🚪</span> Log Out</a>{% else %}<a href="/login"><span>🔐</span> Log In</a>{% endif %}
+</div></details></div></aside>
 <main class="section-main"><a class="back" href="/dashboard">← Back to dashboard</a><section class="hero"><div class="eyebrow">🎃 AURELOIS • CANDY ECONOMY</div><h1>🍬 Economy</h1><p>Manage Candy rewards and monitor the economy from one place.</p></section>
 <section class="grid"><div class="card"><span>Tracked Users</span><strong>{{ "{:,}".format(total_users) }}</strong></div><div class="card"><span>Total Candy</span><strong>{{ "{:,}".format(total_candy) }} 🍬</strong></div><div class="card"><span>Daily Reward</span><strong>{{ "{:,}".format(config.daily_reward) }}</strong></div><div class="card"><span>Trick-or-Treat</span><strong>{{ config.trick_or_treat_min }}–{{ config.trick_or_treat_max }}</strong></div></section>
 <section class="card" style="margin-top:20px"><h2>⚙️ Economy settings</h2><p style="color:#aaa2b9">These values are used by the Discord economy commands immediately after saving.</p><form method="post" action="/economy/settings"><div class="form-grid"><label>Daily reward<input type="number" name="daily_reward" min="1" value="{{ config.daily_reward }}"></label><label>Trick-or-treat minimum<input type="number" name="trick_or_treat_min" min="1" value="{{ config.trick_or_treat_min }}"></label><label>Trick-or-treat maximum<input type="number" name="trick_or_treat_max" min="1" value="{{ config.trick_or_treat_max }}"></label></div><button class="button" type="submit">Save economy settings</button></form></section>
