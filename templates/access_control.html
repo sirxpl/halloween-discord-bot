@@ -15,6 +15,13 @@
     .server-name{font-weight:700}.server-id,.muted{color:var(--muted);font-size:11px;margin-top:4px}
     .server-count{color:#c4b5fd;font-size:11px}
     .denied{color:#fca5a5}
+    .command-search{width:100%;padding:13px 15px;margin-top:18px;border:1px solid var(--border);border-radius:12px;background:#11111a;color:var(--text);font:inherit;outline:none}
+    .command-search:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.12)}
+    .command-list{display:grid;gap:10px;margin-top:14px;max-height:420px;overflow-y:auto}
+    .command-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 15px;border:1px solid var(--border);border-radius:12px;background:#171722}
+    .command-name{font-weight:800;color:#c4b5fd}.command-description{color:var(--muted);font-size:12px;margin-top:4px}
+    .command-count{color:#86efac;font-size:11px;font-weight:700}
+    .command-empty{display:none;padding:18px;text-align:center;color:var(--muted)}
   </style>
 </head>
 <body>
@@ -60,6 +67,19 @@
       <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
     </div>
     <div class="access-card">
+      <div class="access-header"><div><h2>Slash commands</h2><p class="muted">Search the slash commands currently registered on the bot.</p></div><span class="access-badge">{{ slash_commands|length }} command{% if slash_commands|length != 1 %}s{% endif %}</span></div>
+      <input id="command-search" class="command-search" type="search" placeholder="🔎 Search slash commands..." autocomplete="off" aria-label="Search slash commands">
+      <div id="command-list" class="command-list">
+        {% for command in slash_commands %}
+          <div class="command-row" data-command-search="{{ command.name|lower }} {{ command.description|lower }}">
+            <div><div class="command-name">/{{ command.name }}</div><div class="command-description">{{ command.description }}</div></div>
+          </div>
+        {% endfor %}
+      </div>
+      <div id="command-empty" class="command-empty">No slash commands match your search.</div>
+    </div>
+
+    <div class="access-card">
       <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
       {% if bot_guilds %}
         <div class="server-list">
@@ -76,5 +96,21 @@
     </div>
   {% endif %}
 </main>
+<script>
+  const search = document.getElementById("command-search");
+  const rows = Array.from(document.querySelectorAll(".command-row"));
+  const empty = document.getElementById("command-empty");
+
+  search?.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
+    let visible = 0;
+    rows.forEach((row) => {
+      const matches = !query || row.dataset.commandSearch.includes(query);
+      row.style.display = matches ? "flex" : "none";
+      if (matches) visible += 1;
+    });
+    if (empty) empty.style.display = visible ? "none" : "block";
+  });
+</script>
 </body>
 </html>
