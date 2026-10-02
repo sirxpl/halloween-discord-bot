@@ -525,6 +525,99 @@ def profile_page():
     )
 
 
+@app.get("/users")
+def users_page():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+
+    guilds = list(session.get("discord_guilds", []))
+    guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
+    search = request.args.get("q", "").strip()
+    selected = next((g for g in guilds if str(g.get("id")) == str(guild_id)), None)
+
+    query = {}
+    if guild_id and str(guild_id).isdigit():
+        query["guild_id"] = int(guild_id)
+    if search:
+        terms = [{"username": {"$regex": search, "$options": "i"}},
+                 {"display_name": {"$regex": search, "$options": "i"}}]
+        if search.isdigit():
+            terms.append({"user_id": int(search)})
+        query["$or"] = terms
+
+    records = list(users.find(query).sort("balance", -1).limit(100))
+    control_map = {
+        (int(item["guild_id"]), int(item["user_id"])): item
+        for item in member_controls.find(query if guild_id else {}).limit(500)
+    }
+    for record in records:
+        control = control_map.get((int(record.get("guild_id", 0)), int(record.get("user_id", 0))), {})
+        record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
+        record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
+
+    return render_template("users.html", user=user, avatar_url=discord_avatar_url(user),
+                           guilds=guilds, selected_guild=selected, guild_id=str(guild_id),
+                           search=search, users=records)
+
+
+@app.post("/users/candy")
+def users_candy():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_id = int(request.form.get("member_id", ""))
+        amount = int(request.form.get("amount", "0"))
+        action = request.form.get("action", "")
+        if amount < 1 or action not in {"add", "subtract"}:
+            raise ValueError
+        if action == "add":
+            result = users.find_one_and_update(
+                {"guild_id": guild_id, "user_id": member_id},
+                {"$inc": {"balance": amount}},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        else:
+            result = users.find_one_and_update(
+                {"guild_id": guild_id, "user_id": member_id, "balance": {"$gte": amount}},
+                {"$inc": {"balance": -amount}},
+                return_document=ReturnDocument.AFTER,
+            )
+            if result is None:
+                return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), error="subtract"))
+        log_activity("admin_add" if action == "add" else "admin_subtract",
+                     user_id=member_id, guild_id=guild_id, amount=amount,
+                     details={"changed_by": user["id"], "source": "web_users"})
+        return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), saved=action))
+    except (TypeError, ValueError):
+        return redirect(url_for("users_page", guild=request.form.get("guild_id", ""), q=request.form.get("q", ""), error="invalid"))
+
+
+@app.post("/users/control")
+def users_control():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_id = int(request.form.get("member_id", ""))
+        field = request.form.get("field", "")
+        enabled = request.form.get("enabled") == "1"
+        if field not in {"blocked_from_candy", "leaderboard_excluded"}:
+            raise ValueError
+        set_member_control(guild_id, member_id, field, enabled, user["id"])
+        log_activity("member_control", user_id=member_id, guild_id=guild_id,
+                     details={"control": field, "enabled": enabled, "source": "web_users", "changed_by": user["id"]})
+        return redirect(url_for("users_page", guild=guild_id, q=request.form.get("q", ""), saved="control"))
+    except (TypeError, ValueError):
+        return redirect(url_for("users_page", guild=request.form.get("guild_id", ""), q=request.form.get("q", ""), error="invalid"))
+
+
 @app.get("/access-control")
 def access_control_page():
     user = session.get("discord_user")
