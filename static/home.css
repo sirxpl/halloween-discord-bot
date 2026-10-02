@@ -5,7 +5,7 @@ body{margin:0;min-height:100vh;background:#09070d;color:#f8f4ff;font-family:Inte
 body:before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 50% 20%,rgba(113,55,180,.22),transparent 42%),radial-gradient(circle at 15% 80%,rgba(255,122,26,.10),transparent 32%);pointer-events:none}
 main{width:min(1120px,calc(100% - 40px));margin:auto;position:relative;z-index:1}
 nav{height:86px;display:flex;align-items:center;justify-content:space-between}
-.brand{display:flex;align-items:center;gap:12px}.brand>span{font-size:30px}.brand strong{display:block;font-size:18px}.brand small{display:block;color:#958da4;font-size:11px;margin-top:3px}
+.brand{display:flex;align-items:center;gap:12px}.brand>span{font-size:30px}.brand-logo{width:38px;height:38px;display:grid;place-items:center;border:1px solid #3b294b;border-radius:12px;background:linear-gradient(135deg,#171020,#24132d);font-size:22px;box-shadow:0 8px 24px rgba(130,65,220,.18)}.brand strong{display:block;font-size:18px}.brand small{display:block;color:#958da4;font-size:11px;margin-top:3px}
 .nav-link{color:#cfc8da;text-decoration:none;font-size:14px;font-weight:600}.nav-link:hover{color:#fff}
 .hero{text-align:center;padding:92px 0 70px}.badge{display:inline-block;padding:9px 14px;border:1px solid #3b294b;border-radius:999px;background:#15101b;color:#d9baf3;font-size:11px;font-weight:700;letter-spacing:.12em}
 h1{font-size:clamp(48px,8vw,86px);line-height:.98;letter-spacing:-.055em;margin:25px 0 22px}
@@ -23,7 +23,6 @@ h1 span{background:linear-gradient(90deg,#b67cff,#ff9b3d);-webkit-background-cli
 .platform-list{display:flex;justify-content:center;align-items:center;gap:30px;flex-wrap:wrap}
 .platform{display:inline-flex;align-items:center;gap:9px;color:#aaa2b5;text-decoration:none;font-size:13px;font-weight:600;transition:color .2s ease}
 .platform:hover{color:#fff}
-.platform img{width:19px;height:19px;opacity:.75;transition:opacity .2s ease}
-.platform:hover img{opacity:1}
+.platform-icon{width:24px;height:24px;display:inline-grid;place-items:center;border:1px solid #342a3e;border-radius:7px;background:#15111c;color:#c9bed8;font-size:9px;font-weight:800;letter-spacing:-.03em;opacity:.85;transition:opacity .2s ease,border-color .2s ease}.platform:hover .platform-icon{opacity:1;border-color:#554362}
 footer{text-align:center;color:#655e6e;font-size:12px;padding:24px 0 38px}footer span{padding:0 8px}
 @media(max-width:700px){main{width:min(100% - 26px,560px)}nav{height:72px}.nav-link{display:none}.hero{padding:65px 0 48px}.hero>p{font-size:15px}.cards{grid-template-columns:1fr}.actions{margin-bottom:50px}}
