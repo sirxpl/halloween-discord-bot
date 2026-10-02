@@ -315,10 +315,16 @@ def access_control_page():
 
     bot = BOT["instance"]
     bot_guilds = []
+    slash_commands = []
     if bot is not None and not bot.is_closed():
         bot_guilds = sorted(
             [{"id": str(guild.id), "name": guild.name, "member_count": guild.member_count or 0}
              for guild in bot.guilds],
+            key=lambda item: item["name"].lower(),
+        )
+        slash_commands = sorted(
+            [{"name": command.name, "description": command.description or "No description available."}
+             for command in bot.tree.get_commands()],
             key=lambda item: item["name"].lower(),
         )
     return render_template(
@@ -327,6 +333,7 @@ def access_control_page():
         avatar_url=discord_avatar_url(user),
         allowed=True,
         bot_guilds=bot_guilds,
+        slash_commands=slash_commands,
     )
 
 
