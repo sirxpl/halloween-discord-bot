@@ -1149,7 +1149,7 @@ class HalloweenBot(commands.Cog):
     @app_commands.describe(member="Member receiving Candy.", amount="Amount of Candy to add.")
     async def add(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
         if not is_admin(interaction.user.id):
-            await interaction.response.send_message("🚫 Only Aurelois admins can use this command.", ephemeral=True)
+            await interaction.response.send_message("🚫 Only Aureolis admins can use this command.", ephemeral=True)
             return
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
@@ -1164,7 +1164,7 @@ class HalloweenBot(commands.Cog):
     @app_commands.describe(member="Member losing Candy.", amount="Amount of Candy to subtract.")
     async def subtract(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
         if not is_admin(interaction.user.id):
-            await interaction.response.send_message("🚫 Only Aurelois admins can use this command.", ephemeral=True)
+            await interaction.response.send_message("🚫 Only Aureolis admins can use this command.", ephemeral=True)
             return
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
