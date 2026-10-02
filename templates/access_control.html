@@ -109,6 +109,36 @@
     </div>
 
     <div class="access-card">
+      <div class="access-header"><div><h2>🍬 Member Candy Controls</h2><p class="muted">Block a member from Candy activities or exclude them from leaderboards. These controls are independent.</p></div><span class="access-badge">{{ member_controls|length }} saved</span></div>
+      <form method="post" action="{{ url_for('access_control_member_control') }}" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px">
+        <input name="guild_id" type="text" inputmode="numeric" placeholder="Server ID" required class="command-search" style="margin-top:0">
+        <input name="member_id" type="text" inputmode="numeric" placeholder="Member User ID" required class="command-search" style="margin-top:0">
+        <select name="field" class="command-search" style="margin-top:0" aria-label="Member control">
+          <option value="blocked_from_candy">🚫 Block Candy activities</option>
+          <option value="leaderboard_excluded">🏆 Exclude from leaderboard</option>
+        </select>
+        <select name="enabled" class="command-search" style="margin-top:0" aria-label="Control state">
+          <option value="1">Enable</option><option value="0">Disable</option>
+        </select>
+        <button type="submit" class="command-toggle enabled" style="grid-column:1/-1">Save member control</button>
+      </form>
+      {% if member_controls %}
+      <div class="server-list">
+        {% for item in member_controls %}
+        <div class="server-row">
+          <div><div class="server-name">👤 {{ item.user_id }}</div><div class="server-id">Server {{ item.guild_id }} • {{ item.updated_at.strftime("%Y-%m-%d %H:%M UTC") if item.updated_at else "Recently updated" }}</div></div>
+          <div class="server-count">
+            {% if item.blocked_from_candy %}🚫 Candy blocked{% endif %}
+            {% if item.blocked_from_candy and item.leaderboard_excluded %} • {% endif %}
+            {% if item.leaderboard_excluded %}🏆 Leaderboard excluded{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="access-card">
       <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
       {% if bot_guilds %}
         <div class="server-list">
