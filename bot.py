@@ -79,7 +79,7 @@ def require_web_login_screen():
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
-        return dashboard()
+        return redirect(url_for("dashboard"))
     return None
 
 
