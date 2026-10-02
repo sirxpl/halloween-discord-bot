@@ -321,7 +321,7 @@ def get_bot_member(guild_id, user_id):
 DAILY_REWARD = 100
 ARCANE_BOT_IDS = {1217870452253397082, 437808476106784770}
 ARCANE_LEVEL_BASE_BONUS = 250
-bonus_PER_LEVEL = 5
+ARCANE_LEVEL_BONUS_PER_LEVEL = 5
 ARCANE_LEVEL_PATTERN = re.compile(r"<@!?(\d+)>\s+has reached level\s+\*\*(\d+)\*\*\.\s+GG!$", re.IGNORECASE)
 
 TRICK_OR_TREAT_MIN = 25
@@ -1345,7 +1345,7 @@ class HalloweenBot(commands.Cog):
 
         user_id = int(match.group(1))
         level = int(match.group(2))
-            bonus = ARCANE_LEVEL_BASE_BONUS + (level * ARCANE_LEVEL_BONUS_PER_LEVEL)
+        bonus = ARCANE_LEVEL_BASE_BONUS + (level * ARCANE_LEVEL_BONUS_PER_LEVEL)
         guild_id = message.guild.id
 
         # Use a unique document per guild/member/level so duplicate deliveries
