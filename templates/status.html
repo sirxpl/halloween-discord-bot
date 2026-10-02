@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="refresh" content="15">
-  <title>Aurelois • Status</title>
+  <title>Aureolis • Status</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='status.css') }}">
 </head>
 <body>
   <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a><a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>{% endif %}
@@ -49,7 +49,7 @@
   <main class="section-main">
     <header class="hero">
       <div>
-        <div class="eyebrow">🎃 AURELOIS • SERVICE HEALTH</div>
+        <div class="eyebrow">🎃 AUREOLIS • SERVICE HEALTH</div>
         <h1>📡 Status</h1>
         <p>Live health of the bot, database and web service.</p>
       </div>
@@ -106,7 +106,7 @@
     </section>
 
     <div class="refresh">This page refreshes automatically every 15 seconds.</div>
-    <footer>🎃 Aurelois Halloween Bot <span>•</span> Status</footer>
+    <footer>🎃 Aureolis Halloween Bot <span>•</span> Status</footer>
   </main>
 </body>
 </html>
