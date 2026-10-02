@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aurelois • Profile</title><link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}"><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d,#0d0917 45%,#07050d);color:#f8f7ff;font-family:Inter,system-ui,sans-serif;min-height:100vh}.wrap{max-width:950px;margin:auto;padding:42px 22px 70px}.profile{margin-top:24px;padding:34px;border:1px solid rgba(167,139,250,.2);border-radius:26px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));box-shadow:0 24px 70px rgba(0,0,0,.3);display:flex;align-items:center;gap:20px}.avatar{width:82px;height:82px;border-radius:22px;object-fit:cover;background:#7c3aed;display:grid;place-items:center;font-size:38px}.profile h1{margin:7px 0 4px}.muted{color:#aaa2b9}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px;margin-top:20px}.card{padding:22px;border:1px solid #ffffff12;border-radius:20px;background:#140f1edc}.label{color:#938aa0;font-size:12px;display:block}.value{display:block;font-size:28px;font-weight:900;margin-top:6px}.button{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 18px;border-radius:12px;font-weight:800}.select{margin-top:22px;padding:16px;border-radius:16px;background:#ffffff08}.select a{color:#c4b5fd;margin-right:12px}.note{margin-top:22px;color:#aaa2b9;line-height:1.6}</style></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aurelois • Profile</title><link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}"><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d,#0d0917 45%,#07050d);color:#f8f7ff;font-family:Inter,system-ui,sans-serif;min-height:100vh}.wrap{max-width:1050px;margin:auto;padding:42px 22px 70px}.profile-hero{margin-top:24px;padding:34px;border:1px solid rgba(167,139,250,.2);border-radius:26px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));box-shadow:0 24px 70px rgba(0,0,0,.3);display:flex;align-items:center;gap:22px}.profile-avatar{width:88px;height:88px;flex:0 0 88px;border-radius:24px;object-fit:cover;background:#7c3aed;display:grid;place-items:center;font-size:38px}.profile-hero h1{margin:7px 0 4px;font-size:clamp(30px,5vw,48px)}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.muted{color:#aaa2b9}.handle{color:#c9c3d8}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px;margin-top:20px}.card{padding:22px;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:rgba(20,15,30,.86)}.label{color:#938aa0;font-size:12px;display:block}.value{display:block;font-size:28px;font-weight:900;margin-top:6px}.sub{display:block;color:#8f879a;font-size:12px;margin-top:5px}.info{margin-top:22px;padding:24px;border:1px solid rgba(167,139,250,.15);border-radius:20px;background:rgba(18,13,27,.8)}.info h2{margin:0 0 16px}.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.info-item{padding:15px;border-radius:14px;background:#ffffff08}.info-item strong{display:block;font-size:13px}.info-item span{display:block;color:#aaa2b9;font-size:12px;margin-top:5px;word-break:break-word}.note{margin-top:22px;color:#aaa2b9;line-height:1.6}.button{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 18px;border-radius:12px;font-weight:800}.button:hover{background:#8b5cf6}@media(max-width:600px){.profile-hero{padding:24px;gap:16px}.profile-avatar{width:68px;height:68px;flex-basis:68px;border-radius:19px}.profile-hero h1{font-size:30px}} </style></head>
 <body><aside class="sidebar">
   <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
@@ -37,8 +37,35 @@
     </div>
   </div>
 </aside>
-<main class="section-main wrap"><section class="profile">{% if logged_in and avatar_url %}<img class="avatar" src="{{ avatar_url }}" alt="Discord avatar">{% else %}<div class="avatar">🎃</div>{% endif %}<div><div class="muted">AURELOIS • DISCORD PROFILE</div>{% if logged_in %}<h1>{{ user.global_name or user.username }}</h1><div class="muted">@{{ user.username }}</div>{% else %}<h1>Connect your Discord</h1><div class="muted">Sign in to load your Candy profile.</div>{% endif %}</div></section>
-{% if not logged_in %}<div style="margin-top:24px"><a class="button" href="/login">Continue with Discord</a></div>{% else %}
-<div class="select"><strong>Server:</strong>{% for g in guilds %}<a href="/profile?guild={{ g.id }}">{{ g.name }}</a>{% endfor %}</div>
-<section class="grid"><div class="card"><span class="label">🍬 Candy Balance</span><span class="value">{{ "{:,}".format(profile.balance if profile else 0) }}</span></div><div class="card"><span class="label">🏆 Leaderboard Rank</span><span class="value">{{ "#" ~ rank if rank else "—" }}</span></div><div class="card"><span class="label">🎒 Inventory Items</span><span class="value">{{ profile.inventory|length if profile else 0 }}</span></div><div class="card"><span class="label">🎃 Quests Completed</span><span class="value">{{ profile.quests_completed if profile and profile.quests_completed is defined else 0 }}</span></div></section>
-<div class="note">Signed in with Discord. Your website profile is connected to the same Candy data used by the bot.</div><p><a class="button" href="/logout">Log out</a></p>{% endif %}</main></body></html>
+<main class="section-main wrap">
+<section class="profile-hero">
+  {% if logged_in and avatar_url %}<img class="profile-avatar" src="{{ avatar_url }}" alt="Discord avatar">{% else %}<div class="profile-avatar">🎃</div>{% endif %}
+  <div>
+    <div class="eyebrow">🎃 AURELOIS • DISCORD PROFILE</div>
+    {% if logged_in %}<h1>{{ user.global_name or user.username }}</h1><div class="handle">@{{ user.username }}</div>{% else %}<h1>Connect your Discord</h1><div class="muted">Sign in to load your Candy profile.</div>{% endif %}
+  </div>
+</section>
+{% if not logged_in %}
+<div style="margin-top:24px"><a class="button" href="/login">Continue with Discord</a></div>
+{% else %}
+<section class="grid">
+  <div class="card"><span class="label">🍬 Candy Balance</span><span class="value">{{ "{:,}".format(profile.balance if profile else 0) }}</span><span class="sub">Current event balance</span></div>
+  <div class="card"><span class="label">🏆 Leaderboard Rank</span><span class="value">{{ "#" ~ rank if rank else "—" }}</span><span class="sub">Current ranking</span></div>
+  <div class="card"><span class="label">🎒 Inventory Items</span><span class="value">{{ profile.inventory|length if profile else 0 }}</span><span class="sub">Collected items</span></div>
+  <div class="card"><span class="label">🎃 Quests Completed</span><span class="value">{{ profile.quests_completed if profile and profile.quests_completed is defined else 0 }}</span><span class="sub">Halloween progress</span></div>
+</section>
+<section class="info">
+  <h2>👤 Account Information</h2>
+  <div class="info-grid">
+    <div class="info-item"><strong>Display Name</strong><span>{{ user.global_name or user.username }}</span></div>
+    <div class="info-item"><strong>Username</strong><span>@{{ user.username }}</span></div>
+    <div class="info-item"><strong>Discord User ID</strong><span>{{ user.id }}</span></div>
+    <div class="info-item"><strong>Account Created</strong><span>{{ account_created.strftime("%B %d, %Y") if account_created else "Unavailable" }}</span></div>
+    <div class="info-item"><strong>Daily Reward</strong><span>{% if next_daily %}Cooldown active — {{ next_daily.strftime("%B %d, %Y at %I:%M %p UTC") }}{% else %}Ready to claim{% endif %}</span></div>
+    <div class="info-item"><strong>Inventory Value</strong><span>🍬 {{ "{:,}".format(inventory_value) }} Candy</span></div>
+  </div>
+</section>
+<div class="note">Your profile is connected to your Discord account and the Aurelois Candy economy. Server selection has been removed from this page.</div>
+<p><a class="button" href="/logout">Log out</a></p>
+{% endif %}
+</main></body></html>
