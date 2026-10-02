@@ -19,8 +19,11 @@
     .command-search:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.12)}
     .command-list{display:grid;gap:10px;margin-top:14px;max-height:420px;overflow-y:auto}
     .command-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 15px;border:1px solid var(--border);border-radius:12px;background:#171722}
-    .command-name{font-weight:800;color:#c4b5fd}.command-description{color:var(--muted);font-size:12px;margin-top:4px}
-    .command-count{color:#86efac;font-size:11px;font-weight:700}
+    .command-row form{margin:0;flex:0 0 auto}
+    .command-info{min-width:0}.command-name{font-weight:800;color:#c4b5fd}.command-description{color:var(--muted);font-size:12px;margin-top:4px}
+    .command-toggle{min-width:105px;padding:9px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
+    .command-toggle.enabled{background:#163523;color:#86efac;border-color:#245b3b}
+    .command-toggle.disabled{background:#3b2020;color:#fca5a5;border-color:#633232}
     .command-empty{display:none;padding:18px;text-align:center;color:var(--muted)}
   </style>
 </head>
@@ -59,7 +62,7 @@
 <main class="section-main access-wrap">
   <div class="eyebrow">AURELOIS • ADMIN CONTROL</div>
   <h1>🛡️ Access Control</h1>
-  <p class="muted">Manage dashboard access and view the Discord servers where this bot is currently installed.</p>
+  <p class="muted">Control which Discord slash commands are enabled, and view the servers where this bot is currently installed.</p>
   {% if not allowed %}
     <div class="access-card"><h2>Access denied</h2><p class="denied">Your Discord account is not on the Aurelois admin allowlist.</p></div>
   {% else %}
@@ -67,12 +70,18 @@
       <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
     </div>
     <div class="access-card">
-      <div class="access-header"><div><h2>Slash commands</h2><p class="muted">Search the slash commands currently registered on the bot.</p></div><span class="access-badge">{{ slash_commands|length }} command{% if slash_commands|length != 1 %}s{% endif %}</span></div>
+      <div class="access-header"><div><h2>Slash command access</h2><p class="muted">Search commands and enable or disable them from the dashboard.</p></div><span class="access-badge">{{ slash_commands|length }} command{% if slash_commands|length != 1 %}s{% endif %}</span></div>
       <input id="command-search" class="command-search" type="search" placeholder="🔎 Search slash commands..." autocomplete="off" aria-label="Search slash commands">
       <div id="command-list" class="command-list">
         {% for command in slash_commands %}
           <div class="command-row" data-command-search="{{ command.name|lower }} {{ command.description|lower }}">
-            <div><div class="command-name">/{{ command.name }}</div><div class="command-description">{{ command.description }}</div></div>
+            <div class="command-info"><div class="command-name">/{{ command.name }}</div><div class="command-description">{{ command.description }}</div></div>
+            <form method="post" action="{{ url_for('access_control_command', command_name=command.name) }}">
+              <input type="hidden" name="enabled" value="{{ 0 if command.enabled else 1 }}">
+              <button class="command-toggle {{ 'enabled' if command.enabled else 'disabled' }}" type="submit">
+                {{ '✓ Enabled' if command.enabled else '✕ Disabled' }}
+              </button>
+            </form>
           </div>
         {% endfor %}
       </div>
