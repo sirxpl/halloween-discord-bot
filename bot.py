@@ -577,8 +577,13 @@ def daily_claim():
 @app.get("/leaderboard")
 def leaderboard_page():
     try:
+        excluded_ids = {
+            int(record["user_id"]) for record in member_controls.find(
+                {"leaderboard_excluded": True}, {"user_id": 1}
+            )
+        }
         top_users = list(
-            users.find({}).sort("balance", -1).limit(25)
+            users.find({"user_id": {"$nin": list(excluded_ids)}}).sort("balance", -1).limit(25)
         )
         discord_bot = BOT["instance"]
         leaderboard = []
