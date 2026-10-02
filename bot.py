@@ -689,14 +689,14 @@ def daily_claim():
 @app.get("/leaderboard")
 def leaderboard_page():
     try:
-        excluded_ids = {
-            int(record["user_id"]) for record in member_controls.find(
-                {"leaderboard_excluded": True}, {"user_id": 1}
+        excluded_pairs = {
+            (int(record["guild_id"]), int(record["user_id"]))
+            for record in member_controls.find(
+                {"leaderboard_excluded": True}, {"guild_id": 1, "user_id": 1}
             )
         }
-        top_users = list(
-            users.find({"user_id": {"$nin": list(excluded_ids)}}).sort("balance", -1).limit(25)
-        )
+        candidates = list(users.find({}).sort("balance", -1).limit(200))
+        top_users = [doc for doc in candidates if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs][:25]
         discord_bot = BOT["instance"]
         leaderboard = []
         for doc in top_users:
@@ -1094,6 +1094,14 @@ class HalloweenBot(commands.Cog):
         if member.bot:
             await interaction.response.send_message("🤖 You can't give Candy to a bot.", ephemeral=True)
             return
+        sender_controls = await db(get_member_controls, interaction.guild.id, interaction.user.id)
+        recipient_controls = await db(get_member_controls, interaction.guild.id, member.id)
+        if sender_controls["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            return
+        if recipient_controls["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 That member is not allowed to participate in Candy activities in this server.", ephemeral=True)
+            return
         if member.id == interaction.user.id:
             await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)
             return
@@ -1162,6 +1170,9 @@ class HalloweenBot(commands.Cog):
             return
         guild_id = interaction.guild.id
         user_id = interaction.user.id
+        if (await db(get_member_controls, guild_id, user_id))["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            return
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         purchased = await db(
             users.find_one_and_update,
