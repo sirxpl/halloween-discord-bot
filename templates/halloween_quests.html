@@ -33,6 +33,9 @@
     <a href="/logging"><span>📋</span> Logging</a>
     <a href="/status"><span>📡</span> Status</a>
     <a href="/events"><span>🎃</span> Events</a>
+    {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+    <a href="/access-control"><span>🛡️</span> Access Control</a>
+    {% endif %}
   </nav>
   <div class="sidebar-bottom">
       <details class="profile-menu">
@@ -52,7 +55,7 @@
         </summary>
         <div class="profile-menu-dropdown">
           <a href="/profile"><span>👤</span> Profile</a>
-          <a href="/access-control"><span>🛡️</span> Access Control</a>
+    
           {% if sidebar_user %}
             <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
           {% else %}
