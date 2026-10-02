@@ -23,29 +23,42 @@
 </head>
 <body>
 <aside class="sidebar">
-    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
-    <nav class="dashboard-nav">
-      <a href="/dashboard"><span>⌂</span> Overview</a>
-      <a href="#"><span>🍬</span> Economy</a>
-      <a href="/shop"><span>🛒</span> Shop</a>
-      <a href="#"><span>🎒</span> Inventory</a>
-      <a href="#"><span>👥</span> Users</a>
-      <a href="/leaderboard"><span>🏆</span> Leaderboard</a>
-      <a class="active" href="/daily"><span>🎁</span> Daily Reward</a>
-      <a href="/halloween-quests"><span>👻</span> Halloween Quests</a>
-      <a href="/statistics"><span>📊</span> Statistics</a>
-      <a href="/announcements"><span>📢</span> Announcements</a>
-      <a href="/rewards"><span>🎁</span> Rewards</a>
-      <a href="#"><span>📋</span> Logging</a>
-      <a href="/status"><span>📡</span> Status</a>
-      <a href="/events"><span>🎃</span> Events</a>
-    </nav>
-    <div class="sidebar-bottom">
-      <a href="/profile"><span>👤</span> Profile</a>
-      <a href="#"><span>⚙️</span> Settings</a>
-      <div class="profile-mini"><div class="avatar">A</div><div><strong>Server Admin</strong><span>Dashboard</span></div><span class="dots">•••</span></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <nav class="dashboard-nav">
+    <a href="/dashboard"><span>⌂</span> Overview</a>
+    <a href="#"><span>🍬</span> Economy</a>
+    <a href="/shop"><span>🛒</span> Shop</a>
+    <a href="/inventory"><span>🎒</span> Inventory</a>
+    <a href="#"><span>👥</span> Users</a>
+    <a href="/leaderboard"><span>🏆</span> Leaderboard</a>
+    <a href="/daily"><span>🎁</span> Daily Reward</a>
+    <a href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+    <a href="/statistics"><span>📊</span> Statistics</a>
+    <a href="/announcements"><span>📢</span> Announcements</a>
+    <a href="/rewards"><span>🎁</span> Rewards</a>
+    <a href="#"><span>📋</span> Logging</a>
+    <a href="/status"><span>📡</span> Status</a>
+    <a href="/events"><span>🎃</span> Events</a>
+  </nav>
+  <div class="sidebar-bottom">
+    <a href="/profile"><span>👤</span> Profile</a>
+    <a href="/settings"><span>⚙️</span> Settings</a>
+    <div class="profile-mini">
+      {% set sidebar_user = session.get('discord_user') %}
+      {% if sidebar_user %}
+        {% if sidebar_user.get('avatar') %}
+          <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ sidebar_user.get('id') }}/{{ sidebar_user.get('avatar') }}.png?size=64" alt="Discord profile picture">
+        {% else %}
+          <div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>
+        {% endif %}
+        <div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
+      {% else %}
+        <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
+      {% endif %}
+      <span class="dots">•••</span>
     </div>
-  </aside>
+  </div>
+</aside>
 <main class="section-main">
   <header>
     <div class="eyebrow">HALLOWEEN • DAILY REWARD</div>
