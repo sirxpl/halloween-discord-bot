@@ -325,7 +325,8 @@ LOG_CATEGORIES = ("economy", "member_activity", "shop", "admin", "errors", "syst
 
 def get_logging_config(guild_id):
     record = logging_config.find_one({"_id": str(guild_id)}) or {}
-    return {"mode": record.get("mode", "simple"), "main": record.get("main", {"type": "channel", "channel_id": ""}),
+    return {"enabled": bool(record.get("enabled", True)), "mode": record.get("mode", "simple"),
+            "main": record.get("main", {"type": "channel", "channel_id": ""}),
             "advanced": record.get("advanced", {}), "updated_at": record.get("updated_at")}
 
 
@@ -346,6 +347,8 @@ def log_category(action):
 
 async def _send_discord_log(guild_id, action, username, amount, details):
     cfg = get_logging_config(guild_id)
+    if not cfg.get("enabled", True):
+        return
     category = log_category(action)
     destination = cfg["advanced"].get(category) if cfg["mode"] == "advanced" else None
     if not destination: destination = cfg["main"]
@@ -435,15 +438,20 @@ def logging_page():
         return redirect(url_for("login"))
     if not is_admin(user["id"]):
         return "Forbidden", 403
-    guilds = list(session.get("discord_guilds", []))
-    guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
-    logs = list(activity_logs.find({}).sort("created_at", -1).limit(100))
-    config = get_logging_config(guild_id) if guild_id else {"mode": "simple", "main": {"type": "channel", "channel_id": ""}, "advanced": {}}
     bot = BOT.get("instance")
+    guilds = []
+    if bot and not bot.is_closed():
+        guilds = [{"id": str(g.id), "name": g.name} for g in sorted(bot.guilds, key=lambda item: item.name.lower())]
+    guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
+    if guild_id and not any(str(g["id"]) == str(guild_id) for g in guilds):
+        guild_id = guilds[0]["id"] if guilds else ""
+    logs = list(activity_logs.find({"guild_id": int(guild_id)}).sort("created_at", -1).limit(100)) if guild_id else []
+    config = get_logging_config(guild_id) if guild_id else {"enabled": True, "mode": "simple", "main": {"type": "channel", "channel_id": ""}, "advanced": {}}
     channels = []
     if bot and not bot.is_closed() and guild_id:
         guild = bot.get_guild(int(guild_id))
-        if guild: channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
+        if guild:
+            channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
     return render_template("logging.html", logs=logs, logging_config=config, logging_guilds=guilds,
                            logging_guild_id=str(guild_id), logging_channels=channels, log_categories=LOG_CATEGORIES)
 
@@ -455,16 +463,24 @@ def logging_settings():
         return "Forbidden", 403
     try:
         guild_id = int(request.form.get("guild_id", ""))
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None:
+            raise ValueError
+        enabled = request.form.get("enabled") == "on"
         mode = request.form.get("mode", "simple")
         if mode not in {"simple", "advanced"}: raise ValueError
+        previous = get_logging_config(guild_id)
         typ = request.form.get("destination_type", "channel")
         if typ == "webhook":
-            url = request.form.get("webhook_url", "").strip()
+            url = request.form.get("webhook_url", "").strip() or previous.get("main", {}).get("url", "")
             if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
             main = {"type": "webhook", "url": url}
         else:
             cid = request.form.get("channel_id", "").strip()
             if not cid.isdigit(): raise ValueError
+            channel = guild.get_channel(int(cid))
+            if channel is None or not isinstance(channel, discord.TextChannel): raise ValueError
             main = {"type": "channel", "channel_id": cid}
         advanced = {}
         for category in LOG_CATEGORIES:
@@ -474,10 +490,14 @@ def logging_settings():
                 if not cid.isdigit(): raise ValueError
                 advanced[category] = {"type": "channel", "channel_id": cid}
             elif ctype == "webhook":
-                url = request.form.get(f"{category}_webhook_url", "").strip()
+                url = request.form.get(f"{category}_webhook_url", "").strip() or previous.get("advanced", {}).get(category, {}).get("url", "")
                 if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
                 advanced[category] = {"type": "webhook", "url": url}
-        save_logging_config(guild_id, mode, main, advanced)
+        logging_config.update_one(
+            {"_id": str(guild_id)},
+            {"$set": {"guild_id": guild_id, "enabled": enabled, "mode": mode, "main": main, "advanced": advanced, "updated_at": now_utc()}},
+            upsert=True,
+        )
         return redirect(url_for("logging_page", guild=guild_id, saved="1"))
     except (TypeError, ValueError):
         return redirect(url_for("logging_page", guild=request.form.get("guild_id", ""), error="invalid"))
