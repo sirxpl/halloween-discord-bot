@@ -705,8 +705,28 @@ def add_candy(guild_id: int, user_id: int, amount: int):
 intents = discord.Intents.default()
 
 
+class AccessControlledTree(app_commands.CommandTree):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        command = interaction.command
+        if command is None:
+            return True
+
+        if await db(is_command_enabled, command.name):
+            return True
+
+        await interaction.response.send_message(
+            f"🚫 **/{command.name}** is currently disabled by the bot administrator.",
+            ephemeral=True,
+        )
+        return False
+
+
 def create_bot():
-    return commands.Bot(command_prefix="!", intents=intents)
+    return commands.Bot(
+        command_prefix="!",
+        intents=intents,
+        tree_cls=AccessControlledTree,
+    )
 
 
 class HalloweenBot(commands.Cog):
@@ -898,19 +918,6 @@ class HalloweenBot(commands.Cog):
 
 async def setup_bot(bot):
     await bot.add_cog(HalloweenBot(bot))
-
-    @bot.tree.interaction_check
-    async def command_access_check(interaction: discord.Interaction):
-        command = interaction.command
-        if command is None:
-            return True
-        if await db(is_command_enabled, command.name):
-            return True
-        await interaction.response.send_message(
-            f"🚫 **/{command.name}** is currently disabled by the bot administrator.",
-            ephemeral=True,
-        )
-        return False
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
