@@ -92,10 +92,14 @@
 
       <section class="grid">
         <div class="panel wide"><div class="panel-head"><div><h3>Quick actions</h3><p>Jump into the tools you use most.</p></div></div><div class="actions">
+          {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
           <button><b>🍬</b><span><strong>Economy</strong><small>Manage Candy settings</small></span><i>→</i></button>
+          {% endif %}
           <button><b>🛒</b><span><strong>Shop</strong><small>Create and manage items</small></span><i>→</i></button>
           <button><b>🎃</b><span><strong>Events</strong><small>Plan Halloween events</small></span><i>→</i></button>
+          {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
           <button><b>⚙️</b><span><strong>Access Control</strong><small>Manage dashboard access</small></span><i>→</i></button>
+          {% endif %}
         </div></div>
         <div class="panel"><div class="panel-head"><div><h3>Bot status</h3><p>Live service information</p></div><span class="online{% if not discord_ok %} offline{% endif %}">● {{ bot_status }}</span></div>
           <div class="status-row"><span>Discord</span><strong>{{ discord_status }}</strong></div><div class="status-row"><span>Database</span><strong>{{ db_status }}</strong></div><div class="status-row"><span>Web dashboard</span><strong>Running</strong></div><div class="status-row"><span>Full details</span><strong><a href="/status" style="color:#a78bfa;text-decoration:none">Open status page →</a></strong></div>
