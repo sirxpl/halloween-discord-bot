@@ -47,7 +47,6 @@
   </div>
 </aside>
 <main class="section-main wrap">
-<section class="hero"><div class="muted">AURELOIS • YOUR COLLECTION</div><h1>🎒 Inventory</h1><div class="balance">🍬 {{ "{:,}".format(profile.balance if profile else 0) }} Candy</div><div class="select"><strong>Server:</strong> {% for g in guilds %}<a href="/inventory?guild={{ g.id }}">{{ g.name }}</a>{% endfor %}</div></section>
 {% if profile and profile.inventory %}
 <section class="grid">
 {% for item in profile.inventory|reverse %}
