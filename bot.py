@@ -270,6 +270,30 @@ def selected_guild(require_manage=False):
     return None
 
 
+def bot_guilds():
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return []
+    return sorted(
+        [{"id": str(guild.id), "name": guild.name} for guild in bot.guilds],
+        key=lambda item: item["name"].lower(),
+    )
+
+
+def selected_bot_guild():
+    guilds = bot_guilds()
+    wanted = str(request.args.get("guild") or session.get("daily_guild_id") or "")
+    guild = next((g for g in guilds if str(g.get("id")) == wanted), None)
+    if guild:
+        session["daily_guild_id"] = str(guild["id"])
+        return guild
+    if guilds:
+        session["daily_guild_id"] = str(guilds[0]["id"])
+        return guilds[0]
+    session.pop("daily_guild_id", None)
+    return None
+
+
 DAILY_REWARD = 100
 TRICK_OR_TREAT_MIN = 25
 TRICK_OR_TREAT_MAX = 150
@@ -821,7 +845,8 @@ def statistics_page():
 @app.get("/daily")
 def daily_page():
     user = session.get("discord_user")
-    guild = selected_guild() if user else None
+    guilds = bot_guilds()
+    guild = selected_bot_guild() if user else None
     profile = None
     next_daily = None
     if user and guild:
@@ -834,7 +859,8 @@ def daily_page():
         guild=guild,
         profile=profile,
         next_daily=next_daily,
-        daily_reward=DAILY_REWARD,
+        daily_reward=get_economy_config()["daily_reward"],
+        daily_guilds=guilds,
     )
 
 
@@ -843,7 +869,7 @@ def daily_claim():
     user = session.get("discord_user")
     if not user:
         return redirect(url_for("login"))
-    guild = selected_guild()
+    guild = selected_bot_guild()
     if not guild:
         return redirect(url_for("daily_page", error="no_server"))
 
