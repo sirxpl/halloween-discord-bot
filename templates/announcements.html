@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Aurelois • Announcements</title>
+  <title>Aureolis • Announcements</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
   <style>
     *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at top,#24143d 0,#0d0917 45%,#07050d 100%);color:#f8f7ff;min-height:100vh}
@@ -12,7 +12,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
   <nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a><a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>{% endif %}
@@ -49,16 +49,16 @@
   </aside>
   <main class="section-main wrap">
     <section class="hero">
-      <div class="eyebrow">🎃 AURELOIS • HALLOWEEN</div>
+      <div class="eyebrow">🎃 AUREOLIS • HALLOWEEN</div>
       <h1>📢 Announcements</h1>
-      <p>Keep up with Halloween event news, Candy economy updates, new quests, and upcoming features for Aurelois.</p>
+      <p>Keep up with Halloween event news, Candy economy updates, new quests, and upcoming features for Aureolis.</p>
     </section>
 
     <section class="cards">
       <article class="card">
         <div class="top"><span class="tag latest">LATEST</span><span class="date">October 1, 2026</span></div>
         <h2>🎃 Halloween season is live!</h2>
-        <p>The Aurelois Halloween event is officially underway. Start earning Candy with <strong>/daily</strong>, go trick-or-treating with <strong>/trickortreat</strong>, and climb the Candy leaderboard.</p>
+        <p>The Aureolis Halloween event is officially underway. Start earning Candy with <strong>/daily</strong>, go trick-or-treating with <strong>/trickortreat</strong>, and climb the Candy leaderboard.</p>
       </article>
 
       <article class="card">
@@ -74,8 +74,8 @@
       </article>
     </section>
 
-    <div class="cta"><a class="button" href="https://discord.gg/aureolis">🎃 Join Aurelois</a></div>
-    <div class="footer">Aurelois Halloween Bot • Announcements</div>
+    <div class="cta"><a class="button" href="https://discord.gg/aureolis">🎃 Join Aureolis</a></div>
+    <div class="footer">Aureolis Halloween Bot • Announcements</div>
   </main>
 </body>
 </html>
