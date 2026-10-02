@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aurelois • Halloween Dashboard</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
-</head>
+<style>.aurelois-hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px;box-shadow:0 24px 70px rgba(0,0,0,.3)}</style></head>
 <body>
   <aside class="sidebar">
     <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div>
@@ -68,7 +68,7 @@
         <div class="header-actions"><button class="ghost">🔔</button><button class="server">🎃 Your Server <span>⌄</span></button></div>
       </header>
 
-      <section class="hero">
+      <section class="hero aurelois-hero">
         <div><div class="pill{% if not discord_ok %} pill-off{% endif %}">● {{ bot_status }}</div><h2>Welcome to the Halloween Dashboard</h2><p>Your bot is ready for the spooky season. Manage your economy, events, shop, and administrator access here.</p><button class="primary">Explore dashboard →</button></div>
         <div class="moon">🌙</div>
       </section>
