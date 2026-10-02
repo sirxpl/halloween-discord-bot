@@ -42,6 +42,8 @@ mongo = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
 db = mongo["halloween_bot"]
 users = db["users"]
 command_access = db["command_access"]
+economy_config = db["economy_config"]
+activity_logs = db["activity_logs"]
 
 ADMIN_USER_IDS = {777341204047331348}
 
@@ -268,12 +270,95 @@ def is_command_enabled(command_name):
     return record is None or record.get("enabled", True)
 
 
+
+def get_economy_config():
+    record = economy_config.find_one({"_id": "global"}) or {}
+    return {
+        "daily_reward": int(record.get("daily_reward", DAILY_REWARD)),
+        "trick_or_treat_min": int(record.get("trick_or_treat_min", TRICK_OR_TREAT_MIN)),
+        "trick_or_treat_max": int(record.get("trick_or_treat_max", TRICK_OR_TREAT_MAX)),
+    }
+
+
+def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max):
+    economy_config.update_one(
+        {"_id": "global"},
+        {"$set": {
+            "daily_reward": int(daily_reward),
+            "trick_or_treat_min": int(trick_or_treat_min),
+            "trick_or_treat_max": int(trick_or_treat_max),
+            "updated_at": now_utc(),
+        }},
+        upsert=True,
+    )
+
+
+def log_activity(action, user_id=None, username=None, guild_id=None, amount=None, details=None):
+    activity_logs.insert_one({
+        "action": action,
+        "user_id": int(user_id) if user_id is not None else None,
+        "username": username,
+        "guild_id": int(guild_id) if guild_id is not None else None,
+        "amount": amount,
+        "details": details,
+        "created_at": now_utc(),
+    )
+
+
 def set_command_enabled(command_name, enabled):
     command_access.update_one(
         {"command_name": command_name},
         {"$set": {"command_name": command_name, "enabled": bool(enabled), "updated_at": now_utc()}},
         upsert=True,
     )
+
+
+@app.get("/economy")
+def economy_page():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    config = get_economy_config()
+    try:
+        total_users = users.count_documents({})
+        total_candy = sum((doc.get("balance", 0) or 0) for doc in users.find({}, {"balance": 1}))
+        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy"]}}).sort("created_at", -1).limit(12))
+    except PyMongoError:
+        total_users, total_candy, recent = 0, 0, []
+    return render_template("economy.html", config=config, total_users=total_users, total_candy=total_candy, recent=recent)
+
+
+@app.post("/economy/settings")
+def economy_settings():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        daily_reward = int(request.form.get("daily_reward", DAILY_REWARD))
+        minimum = int(request.form.get("trick_or_treat_min", TRICK_OR_TREAT_MIN))
+        maximum = int(request.form.get("trick_or_treat_max", TRICK_OR_TREAT_MAX))
+        if daily_reward < 1 or minimum < 1 or maximum < minimum or maximum > 1000000:
+            raise ValueError
+    except (TypeError, ValueError):
+        return redirect(url_for("economy_page", error="invalid"))
+    set_economy_config(daily_reward, minimum, maximum)
+    log_activity("economy_settings", user_id=user["id"], username=user.get("username"), details={"daily_reward": daily_reward, "trick_or_treat_min": minimum, "trick_or_treat_max": maximum})
+    return redirect(url_for("economy_page", saved="1"))
+
+
+@app.get("/logging")
+def logging_page():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    logs = list(activity_logs.find({}).sort("created_at", -1).limit(100))
+    return render_template("logging.html", logs=logs)
 
 
 @app.get("/profile")
@@ -752,7 +837,7 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
-        config = {"daily_reward": DAILY_REWARD}
+        config = get_economy_config()
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
@@ -768,7 +853,7 @@ class HalloweenBot(commands.Cog):
                 f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
+        await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, config["daily_reward"])\n        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
@@ -779,7 +864,7 @@ class HalloweenBot(commands.Cog):
         user_id = interaction.user.id
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
-        config = {"trick_or_treat_min": TRICK_OR_TREAT_MIN, "trick_or_treat_max": TRICK_OR_TREAT_MAX}
+        config = get_economy_config()
         cutoff = now - timedelta(hours=1)
         reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
         updated = await db(
@@ -796,7 +881,7 @@ class HalloweenBot(commands.Cog):
                 f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
+        await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)\n        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
@@ -828,6 +913,7 @@ class HalloweenBot(commands.Cog):
             return
         await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         await db(add_candy, interaction.guild.id, member.id, amount)
+        await db(log_activity, "give", interaction.user.id, interaction.user.name, interaction.guild.id, amount, {"recipient_id": member.id, "recipient": member.name})
         await interaction.response.send_message(
             f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
         )
@@ -882,6 +968,7 @@ class HalloweenBot(commands.Cog):
             balance = current.get("balance", 0) if current else 0
             await interaction.response.send_message(f"❌ You need **{item_data['price']:,} 🍬** but only have **{balance:,} 🍬**.", ephemeral=True)
             return
+        await db(log_activity, "buy", interaction.user.id, interaction.user.name, guild_id, item_data["price"], {"item": item_data["name"]})
         await interaction.response.send_message(f"🛒 You bought **{item_data['name']}** for **{item_data['price']:,} 🍬**! Your item is now in your inventory.")
 
     @app_commands.command(name="shop", description="View the Halloween Candy shop.")
