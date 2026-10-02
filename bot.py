@@ -270,12 +270,33 @@ def profile_page():
     guild = selected_guild()
     profile = None
     rank = None
+    inventory_value = 0
+    next_daily = None
     if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
         if profile:
             rank = users.count_documents({"guild_id": guild_id, "balance": {"$gt": profile.get("balance", 0)}}) + 1
-    return render_template("profile.html", logged_in=True, user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, profile=profile, rank=rank)
+            inventory_value = sum((item.get("price", 0) or 0) for item in profile.get("inventory", []))
+            if profile.get("last_daily"):
+                next_daily = profile["last_daily"] + timedelta(hours=24)
+    account_created = None
+    try:
+        account_created = discord.utils.snowflake_time(int(user["id"]))
+    except (ValueError, TypeError):
+        pass
+    return render_template(
+        "profile.html",
+        logged_in=True,
+        user=user,
+        avatar_url=discord_avatar_url(user),
+        guild=guild,
+        profile=profile,
+        rank=rank,
+        account_created=account_created,
+        next_daily=next_daily,
+        inventory_value=inventory_value,
+    )
 
 
 @app.get("/access-control")
