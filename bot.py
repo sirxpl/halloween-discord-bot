@@ -47,7 +47,7 @@ activity_logs = db["activity_logs"]
 logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 
-ADMIN_USER_IDS = {777341204047331348}
+ADMIN_USER_IDS = {777341204047331348, 793723672225382452}
 
 SHOP_ITEMS = [
     {"name": "🎃 Pumpkin Lantern", "price": 250, "description": "A spooky lantern for your Halloween inventory."},
