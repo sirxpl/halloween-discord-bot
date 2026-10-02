@@ -57,7 +57,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
 app.config["SESSION_TYPE"] = "mongodb"
 app.config["SESSION_MONGODB"] = mongo
-app.config["SESSION_MONGODB_DB"] = db
+app.config["SESSION_MONGODB_DB"] = "halloween_bot"
 app.config["SESSION_MONGODB_COLLECT"] = "web_sessions"
 app.config["SESSION_PERMANENT"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=31)
