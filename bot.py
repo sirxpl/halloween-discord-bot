@@ -46,6 +46,7 @@ economy_config = db["economy_config"]
 activity_logs = db["activity_logs"]
 logging_config = db["logging_config"]
 member_controls = db["member_controls"]
+daily_boosts = db["daily_boosts"]
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452}
 
@@ -294,6 +295,27 @@ def selected_bot_guild():
     return None
 
 
+def get_bot_member(guild_id, user_id):
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return None
+    guild = bot.get_guild(int(guild_id))
+    if guild is None:
+        return None
+    member = guild.get_member(int(user_id))
+    if member is not None:
+        return member
+    try:
+        future = asyncio.run_coroutine_threadsafe(
+            guild.fetch_member(int(user_id)),
+            bot.loop,
+        )
+        return future.result(timeout=5)
+    except Exception:
+        log.exception("Could not fetch Discord member %s in guild %s", user_id, guild_id)
+        return None
+
+
 DAILY_REWARD = 100
 TRICK_OR_TREAT_MIN = 25
 TRICK_OR_TREAT_MAX = 150
@@ -342,6 +364,43 @@ def set_member_control(guild_id, user_id, field, enabled, updated_by=None):
         field: bool(enabled), "guild_id": int(guild_id), "user_id": int(user_id),
         "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None,
     }}, upsert=True)
+
+
+def get_daily_boosts(guild_id):
+    return list(daily_boosts.find({"guild_id": int(guild_id)}).sort("multiplier", -1))
+
+
+def set_daily_boost(guild_id, role_id, role_name, multiplier, updated_by=None):
+    multiplier = float(multiplier)
+    if multiplier <= 1 or multiplier > 5:
+        raise ValueError("Daily reward multiplier must be greater than 1 and no more than 5.")
+    daily_boosts.update_one(
+        {"guild_id": int(guild_id), "role_id": int(role_id)},
+        {"$set": {
+            "guild_id": int(guild_id),
+            "role_id": int(role_id),
+            "role_name": str(role_name),
+            "multiplier": multiplier,
+            "updated_at": now_utc(),
+            "updated_by": int(updated_by) if updated_by else None,
+        }},
+        upsert=True,
+    )
+
+
+def remove_daily_boost(guild_id, role_id):
+    daily_boosts.delete_one({"guild_id": int(guild_id), "role_id": int(role_id)})
+
+
+def calculate_daily_reward(base_reward, role_ids, guild_id):
+    boosts = get_daily_boosts(guild_id)
+    role_ids = {int(role_id) for role_id in role_ids}
+    matching = [boost for boost in boosts if int(boost.get("role_id", 0)) in role_ids]
+    if not matching:
+        return int(base_reward), None
+    boost = max(matching, key=lambda item: float(item.get("multiplier", 1)))
+    multiplier = float(boost.get("multiplier", 1))
+    return max(1, int(round(int(base_reward) * multiplier))), boost
 
 
 LOG_CATEGORIES = ("economy", "member_activity", "shop", "admin", "errors", "system")
@@ -758,12 +817,23 @@ def access_control_page():
     bot = BOT["instance"]
     bot_guilds = []
     slash_commands = []
+    selected_boost_guild_id = str(request.args.get("boost_guild") or "")
+    boost_roles = []
     if bot is not None and not bot.is_closed():
         bot_guilds = sorted(
             [{"id": str(guild.id), "name": guild.name, "member_count": guild.member_count or 0}
              for guild in bot.guilds],
             key=lambda item: item["name"].lower(),
         )
+        if not selected_boost_guild_id and bot_guilds:
+            selected_boost_guild_id = bot_guilds[0]["id"]
+        selected_boost_guild = bot.get_guild(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else None
+        if selected_boost_guild is not None:
+            boost_roles = sorted(
+                [{"id": str(role.id), "name": role.name, "position": role.position}
+                 for role in selected_boost_guild.roles if not role.is_default()],
+                key=lambda item: (-item["position"], item["name"].lower()),
+            )
         slash_commands = sorted(
             [{
                 "name": command.name,
@@ -772,6 +842,7 @@ def access_control_page():
             } for command in bot.tree.get_commands()],
             key=lambda item: item["name"].lower(),
         )
+    saved_daily_boosts = get_daily_boosts(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
     return render_template(
         "access_control.html",
         user=user,
@@ -780,6 +851,9 @@ def access_control_page():
         bot_guilds=bot_guilds,
         slash_commands=slash_commands,
         member_controls=list(member_controls.find({}).sort("updated_at", -1).limit(100)),
+        boost_guild_id=selected_boost_guild_id,
+        boost_roles=boost_roles,
+        daily_boosts=saved_daily_boosts,
     )
 
 
@@ -803,6 +877,52 @@ def access_control_member_control():
     except (TypeError, ValueError):
         return redirect(url_for("access_control_page", error="invalid_member"))
     return redirect(url_for("access_control_page", saved="member"))
+
+
+@app.post("/access-control/daily-boost")
+def access_control_daily_boost():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        role_id = int(request.form.get("role_id", ""))
+        multiplier = float(request.form.get("multiplier", ""))
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        role = guild.get_role(role_id) if guild else None
+        if guild is None or role is None or role.is_default():
+            raise ValueError
+        set_daily_boost(guild_id, role_id, role.name, multiplier, user["id"])
+        log_activity("daily_boost", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"role_id": role_id, "role_name": role.name, "multiplier": multiplier, "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_boost"))
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="boost"))
+
+
+@app.post("/access-control/daily-boost/remove")
+def access_control_daily_boost_remove():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        role_id = int(request.form.get("role_id", ""))
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None or guild.get_role(role_id) is None:
+            raise ValueError
+        remove_daily_boost(guild_id, role_id)
+        log_activity("daily_boost_removed", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"role_id": role_id, "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_boost"))
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="boost_removed"))
 
 
 @app.post("/access-control/command/<command_name>")
@@ -877,6 +997,9 @@ def daily_claim():
     user_id = int(user["id"])
     if get_member_controls(guild_id, user_id)["blocked_from_candy"]:
         return redirect(url_for("daily_page", guild=guild_id, error="restricted"))
+    member = get_bot_member(guild_id, user_id)
+    role_ids = [role.id for role in member.roles] if member else []
+    reward, boost = calculate_daily_reward(get_economy_config()["daily_reward"], role_ids, guild_id)
     now = now_utc()
     ensure_user(
         guild_id,
@@ -894,12 +1017,20 @@ def daily_claim():
                 {"last_daily": {"$lte": cutoff}},
             ],
         },
-        {"$set": {"last_daily": now}, "$inc": {"balance": DAILY_REWARD}},
+        {"$set": {"last_daily": now}, "$inc": {"balance": reward}},
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
         return redirect(url_for("daily_page", guild=guild_id, error="cooldown"))
-    return redirect(url_for("daily_page", guild=guild_id, claimed="1"))
+    log_activity(
+        "daily",
+        user_id=user_id,
+        username=user.get("username"),
+        guild_id=guild_id,
+        amount=reward,
+        details={"boost_role": boost.get("role_name") if boost else None, "multiplier": boost.get("multiplier") if boost else 1, "source": "web_daily"},
+    )
+    return redirect(url_for("daily_page", guild=guild_id, claimed="1", reward=reward, boost=boost.get("role_name") if boost else ""))
 
 
 @app.get("/leaderboard")
@@ -1214,11 +1345,17 @@ class HalloweenBot(commands.Cog):
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
+        reward, boost = await db(
+            calculate_daily_reward,
+            config["daily_reward"],
+            [role.id for role in getattr(interaction.user, "roles", [])],
+            guild_id,
+        )
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
-            {"$set": {"last_daily": now}, "$inc": {"balance": config["daily_reward"]}},
+            {"$set": {"last_daily": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
@@ -1228,8 +1365,14 @@ class HalloweenBot(commands.Cog):
                 f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
             )
             return
-        await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, config["daily_reward"])
-        await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{config['daily_reward']:,} 🍬 Candy**!")
+        await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, reward,
+                 {"boost_role": boost.get("role_name") if boost else None, "multiplier": boost.get("multiplier") if boost else 1})
+        if boost:
+            await interaction.response.send_message(
+                f"🎃 You claimed your daily reward: **+{reward:,} 🍬 Candy** (**{boost['multiplier']:g}× boost** from **{boost['role_name']}**)!"
+            )
+        else:
+            await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{reward:,} 🍬 Candy**!")
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
