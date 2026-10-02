@@ -3,7 +3,26 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
 <style>.section-main{padding:36px;max-width:1100px}.hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.hero h1{font-size:48px;margin:10px 0}.hero p{color:#c9c3d8}.card{margin-top:20px;background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:20px}.row{padding:15px 0;border-bottom:1px solid rgba(255,255,255,.07)}.row:last-child{border-bottom:0}.meta{color:#aaa2b9;font-size:13px;margin-top:5px}.back{color:#c4b5fd;text-decoration:none;display:inline-block;margin-bottom:20px}</style></head>
 <body><aside class="sidebar"><div class="brand"><div class="brand-mark">🎃</div><div><strong>Aurelois</strong><span>Halloween Bot</span></div></div><nav class="dashboard-nav">
-<a href="/dashboard"><span>⌂</span> Overview</a><a href="/economy"><span>🍬</span> Economy</a><a href="/shop"><span>🛒</span> Shop</a><a href="/inventory"><span>🎒</span> Inventory</a><a href="#"><span>👥</span> Users</a><a href="/leaderboard"><span>🏆</span> Leaderboard</a><a href="/daily"><span>🎁</span> Daily Reward</a><a href="/halloween-quests"><span>👻</span> Halloween Quests</a><a href="/statistics"><span>📊</span> Statistics</a><a href="/announcements"><span>📢</span> Announcements</a><a href="/rewards"><span>🎁</span> Rewards</a><a class="active" href="/logging"><span>📋</span> Logging</a><a href="/status"><span>📡</span> Status</a><a href="/events"><span>🎃</span> Events</a></nav>
+<a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
+{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a>
+<a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>
+{% endif %}
+<a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a>
+<a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>
+<a href="#"><span>👥</span> Users</a>
+<a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a>
+<a class="{% if request.path == '/daily' %}active{% endif %}" href="/daily"><span>🎁</span> Daily Reward</a>
+<a class="{% if request.path == '/halloween-quests' %}active{% endif %}" href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+<a class="{% if request.path == '/statistics' %}active{% endif %}" href="/statistics"><span>📊</span> Statistics</a>
+<a class="{% if request.path == '/announcements' %}active{% endif %}" href="/announcements"><span>📢</span> Announcements</a>
+<a class="{% if request.path == '/rewards' %}active{% endif %}" href="/rewards"><span>🎁</span> Rewards</a>
+<a class="{% if request.path == '/status' %}active{% endif %}" href="/status"><span>📡</span> Status</a>
+<a class="{% if request.path == '/events' %}active{% endif %}" href="/events"><span>🎃</span> Events</a>
+{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+<a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>
+{% endif %}
+</nav>
 <div class="sidebar-bottom"><details class="profile-menu"><summary class="profile-mini"><div class="avatar">🎃</div><div><strong>Admin</strong><span>Logging</span></div><span class="dots">•••</span></summary><div class="profile-menu-dropdown"><a href="/profile"><span>👤</span> Profile</a><a href="/access-control"><span>🛡️</span> Access Control</a><a class="logout" href="/logout"><span>🚪</span> Log Out</a></div></details></div></aside>
 <main class="section-main"><a class="back" href="/dashboard">← Back to dashboard</a><section class="hero"><div class="eyebrow">🎃 AURELOIS • AUDIT TRAIL</div><h1>📋 Logging</h1><p>Recent economy and administrator activity recorded by the bot.</p></section>
 <section class="card"><h2>Recent activity</h2>{% for item in logs %}<div class="row"><strong>{{ item.action|replace("_"," ")|title }}</strong>{% if item.username %} • {{ item.username }}{% endif %}{% if item.amount is not none %} • {{ item.amount|int }} 🍬{% endif %}<div class="meta">{% if item.guild_id %}Guild {{ item.guild_id }} • {% endif %}{% if item.created_at %}{{ item.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}{% endif %}{% if item.details %} • {{ item.details }}{% endif %}</div></div>{% else %}<p class="meta">No activity has been logged yet.</p>{% endfor %}</section></main></body></html>
