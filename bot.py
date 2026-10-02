@@ -70,6 +70,18 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=31)
 Session(app)
 
 
+@app.before_request
+def require_web_login_screen():
+    if request.method not in {"GET", "HEAD"}:
+        return None
+    public_endpoints = {"home", "dashboard", "login", "oauth_callback", "logout", "status_json", "health"}
+    if request.endpoint in public_endpoints:
+        return None
+    if not session.get("discord_user"):
+        return dashboard()
+    return None
+
+
 @app.get("/")
 def home():
     return render_template("home.html")
