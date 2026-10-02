@@ -814,7 +814,7 @@ def access_control_page():
             member_controls=[],
         ), 403
 
-    bot = BOT["instance"]
+    bot = BOT.get("instance")
     bot_guilds = []
     slash_commands = []
     selected_boost_guild_id = str(request.args.get("boost_guild") or "")
