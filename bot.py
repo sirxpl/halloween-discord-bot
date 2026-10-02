@@ -495,7 +495,8 @@ def profile_page():
     profile = None
     rank = None
     inventory_value = 0
-    next_daily = None    if guild:
+    next_daily = None
+    if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
         if profile:
