@@ -44,6 +44,7 @@ users = db["users"]
 command_access = db["command_access"]
 economy_config = db["economy_config"]
 activity_logs = db["activity_logs"]
+member_controls = db["member_controls"]
 
 ADMIN_USER_IDS = {777341204047331348}
 
@@ -293,6 +294,20 @@ def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max):
     )
 
 
+def get_member_controls(guild_id, user_id):
+    record = member_controls.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) or {}
+    return {"blocked_from_candy": bool(record.get("blocked_from_candy", False)), "leaderboard_excluded": bool(record.get("leaderboard_excluded", False))}
+
+
+def set_member_control(guild_id, user_id, field, enabled, updated_by=None):
+    if field not in {"blocked_from_candy", "leaderboard_excluded"}:
+        raise ValueError("Unsupported member control.")
+    member_controls.update_one({"guild_id": int(guild_id), "user_id": int(user_id)}, {"$set": {
+        field: bool(enabled), "guild_id": int(guild_id), "user_id": int(user_id),
+        "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None,
+    }}, upsert=True)
+
+
 def log_activity(action, user_id=None, username=None, guild_id=None, amount=None, details=None):
     activity_logs.insert_one({
         "action": action,
@@ -410,6 +425,7 @@ def access_control_page():
             avatar_url=discord_avatar_url(user),
             allowed=False,
             bot_guilds=[],
+            member_controls=[],
         ), 403
 
     bot = BOT["instance"]
@@ -436,7 +452,30 @@ def access_control_page():
         allowed=True,
         bot_guilds=bot_guilds,
         slash_commands=slash_commands,
+        member_controls=list(member_controls.find({}).sort("updated_at", -1).limit(100)),
     )
+
+
+@app.post("/access-control/member-control")
+def access_control_member_control():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_id = int(request.form.get("member_id", ""))
+        field = request.form.get("field", "")
+        enabled = request.form.get("enabled") == "1"
+        if field not in {"blocked_from_candy", "leaderboard_excluded"}:
+            raise ValueError
+        set_member_control(guild_id, member_id, field, enabled, user["id"])
+        log_activity("member_control", user_id=member_id, guild_id=guild_id,
+                     details={"control": field, "enabled": enabled, "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", error="invalid_member"))
+    return redirect(url_for("access_control_page", saved="member"))
 
 
 @app.post("/access-control/command/<command_name>")
@@ -508,8 +547,10 @@ def daily_claim():
 
     guild_id = int(guild["id"])
     user_id = int(user["id"])
+    if get_member_controls(guild_id, user_id)["blocked_from_candy"]:
+        return redirect(url_for("daily_page", guild=guild_id, error="restricted"))
     now = now_utc()
-    ensure_user(
+    ensure_user 
         guild_id,
         user_id,
         user.get("username"),
@@ -835,6 +876,10 @@ class HalloweenBot(commands.Cog):
             return
         guild_id = interaction.guild.id
         user_id = interaction.user.id
+        controls = await db(get_member_controls, guild_id, user_id)
+        if controls["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            return
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
@@ -863,6 +908,10 @@ class HalloweenBot(commands.Cog):
             return
         guild_id = interaction.guild.id
         user_id = interaction.user.id
+        controls = await db(get_member_controls, guild_id, user_id)
+        if controls["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            return
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
@@ -884,6 +933,40 @@ class HalloweenBot(commands.Cog):
             return
         await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)
         await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
+
+    @app_commands.command(name="add", description="Admin: add Candy to a member's balance.")
+    @app_commands.describe(member="Member receiving Candy.", amount="Amount of Candy to add.")
+    async def add(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 Only Aurelois admins can use this command.", ephemeral=True)
+            return
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+        await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
+        updated = await db(users.find_one_and_update, {"guild_id": interaction.guild.id, "user_id": member.id},
+            {"$inc": {"balance": int(amount)}}, return_document=ReturnDocument.AFTER)
+        await db(log_activity, "admin_add", member.id, member.name, interaction.guild.id, int(amount), {"changed_by": interaction.user.id})
+        await interaction.response.send_message(f"✅ Added **{amount:,} 🍬 Candy** to {member.mention}. New balance: **{updated['balance']:,}**.")
+
+    @app_commands.command(name="subtract", description="Admin: subtract Candy from a member's balance.")
+    @app_commands.describe(member="Member losing Candy.", amount="Amount of Candy to subtract.")
+    async def subtract(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 Only Aurelois admins can use this command.", ephemeral=True)
+            return
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            return
+        await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
+        updated = await db(users.find_one_and_update, {"guild_id": interaction.guild.id, "user_id": member.id, "balance": {"$gte": int(amount)}},
+            {"$inc": {"balance": -int(amount)}}, return_document=ReturnDocument.AFTER)
+        if not updated:
+            current = await db(get_user, interaction.guild.id, member.id)
+            await interaction.response.send_message(f"❌ {member.mention} only has **{(current or {}).get('balance', 0):,} 🍬 Candy**, so that amount cannot be subtracted.", ephemeral=True)
+            return
+        await db(log_activity, "admin_subtract", member.id, member.name, interaction.guild.id, int(amount), {"changed_by": interaction.user.id})
+        await interaction.response.send_message(f"✅ Subtracted **{amount:,} 🍬 Candy** from {member.mention}. New balance: **{updated['balance']:,}**.")
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
@@ -927,7 +1010,11 @@ class HalloweenBot(commands.Cog):
             return
         top_users = await db(
             lambda: list(
-                users.find({"guild_id": interaction.guild.id}).sort("balance", -1).limit(10)
+                users.find({"guild_id": interaction.guild.id, "user_id": {"$nin": [
+                        record["user_id"] for record in member_controls.find(
+                            {"guild_id": interaction.guild.id, "leaderboard_excluded": True}, {"user_id": 1}
+                        )
+                    ]}}).sort("balance", -1).limit(10)
             )
         )
         if not top_users:
