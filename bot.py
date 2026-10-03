@@ -1394,7 +1394,7 @@ class HalloweenBot(commands.Cog):
             return
 
         await db(ensure_user, guild_id, user_id)
-        updated = await db(add_candy, guild_id, user_id, ARCANE_LEVEL_BONUS)
+        updated = await db(add_candy, guild_id, user_id, bonus)
         await db(
             log_activity,
             "arcane_level_bonus",
