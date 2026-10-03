@@ -55,7 +55,7 @@ role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
 arcane_level_rewards = db["arcane_level_rewards"]
 
-ADMIN_USER_IDS = {777341204047331348, 793723672225382452}
+ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299}
 
 SHOP_ITEMS = [
     {"name": "🎃 Pumpkin Lantern", "price": 250, "description": "A spooky lantern for your Halloween inventory."},
