@@ -1371,18 +1371,36 @@ class HalloweenBot(commands.Cog):
                     message_texts.append(field.value)
 
         match = None
+        matched_text = None
         for text in message_texts:
-            match = ARCANE_LEVEL_PATTERN.fullmatch(text.strip())
-            if match:
+            # Normalize harmless formatting differences Arcane/Discord can add,
+            # such as non-breaking spaces, zero-width characters, or line breaks.
+            normalized_text = (
+                (text or "")
+                .replace("\u200b", "")
+                .replace("\ufeff", "")
+                .replace("\u00a0", " ")
+            )
+            normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
+            candidate = ARCANE_LEVEL_PATTERN.fullmatch(normalized_text)
+            if candidate:
+                match = candidate
+                matched_text = normalized_text
                 break
         if not match:
             log.info(
-                "Arcane level-up message did not match in guild %s. content=%r embeds=%s",
+                "Arcane level-up message did not match in guild %s. content=%r normalized=%r embeds=%s",
                 message.guild.id,
                 message.content,
+                re.sub(r"\s+", " ", (message.content or "").replace("\u200b", "").replace("\ufeff", "").replace("\u00a0", " ")).strip(),
                 len(message.embeds),
             )
             return
+        log.info(
+            "Arcane level-up message matched in guild %s: %r",
+            message.guild.id,
+            matched_text,
+        )
 
         user_id = int(match.group(1))
         level = int(match.group(2))
