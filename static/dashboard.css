@@ -34,3 +34,7 @@ body.guest-dashboard{display:block;min-height:100vh;overflow-x:hidden}
   .guest-dashboard .dashboard-main{padding:16px}
   .guest-dashboard .guest-card{width:100%;min-height:calc(100vh - 32px);display:flex;flex-direction:column;justify-content:center}
 }
+
+.nav-label{margin:14px 13px 4px;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#6d6880}
+.dashboard-nav a.nav-login{margin-top:8px;border:1px dashed #3a3650;color:#c4b5fd}
+@media(max-width:900px){.nav-label{display:none}.dashboard-nav a.nav-login{border:0}}
