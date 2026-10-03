@@ -50,6 +50,8 @@ activity_logs = db["activity_logs"]
 logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
+role_shop_items = db["role_shop_items"]
+role_shop_claims = db["role_shop_claims"]
 arcane_level_rewards = db["arcane_level_rewards"]
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452}
@@ -141,7 +143,56 @@ def announcements_page():
 
 @app.get("/shop")
 def shop_page():
-    return render_template("shop.html", items=SHOP_ITEMS)
+    guild=selected_guild()
+    role_items=list(role_shop_items.find({"guild_id":int(guild["id"]) if guild else -1}).sort("price",1))
+    return render_template("shop.html",items=SHOP_ITEMS,role_items=role_items)
+
+
+@app.get("/shop-panel")
+def shop_panel_page():
+    user=session.get("discord_user")
+    if not user or not is_admin(user["id"]): return "Forbidden",403
+    bot=BOT.get("instance"); guilds=bot_guilds()
+    wanted=str(request.args.get("guild") or session.get("shop_panel_guild_id") or (guilds[0]["id"] if guilds else ""))
+    guild=bot.get_guild(int(wanted)) if bot and not bot.is_closed() and wanted.isdigit() else None
+    if guild is None and guilds: guild=bot.get_guild(int(guilds[0]["id"]))
+    gid=str(guild.id) if guild else ""
+    if gid: session["shop_panel_guild_id"]=gid
+    roles=sorted([{"id":str(r.id),"name":r.name,"position":r.position} for r in guild.roles if not r.is_default() and not r.managed],key=lambda x:(-x["position"],x["name"].lower())) if guild else []
+    listings=list(role_shop_items.find({"guild_id":int(gid) if gid else -1}).sort("price",1))
+    return render_template("shop_panel.html",user=user,avatar_url=discord_avatar_url(user),bot_guilds=guilds,guild_id=gid,roles=roles,listings=listings)
+
+
+@app.post("/shop-panel/save")
+def shop_panel_save():
+    user=session.get("discord_user")
+    if not user or not is_admin(user["id"]): return "Forbidden",403
+    try:
+        gid=int(request.form["guild_id"]); rid=int(request.form["role_id"]); price=int(request.form["price"])
+        bot=BOT.get("instance"); guild=bot.get_guild(gid) if bot and not bot.is_closed() else None
+        role=guild.get_role(rid) if guild else None
+        if not role or role.is_default() or role.managed or price<1: raise ValueError
+        role_shop_items.update_one({"guild_id":gid,"role_id":rid},{"$set":{"guild_id":gid,"role_id":rid,"role_name":role.name,"price":price,"updated_at":now_utc(),"updated_by":int(user["id"])}},upsert=True)
+    except (KeyError,TypeError,ValueError): return redirect(url_for("shop_panel_page",error="invalid"))
+    return redirect(url_for("shop_panel_page",guild=gid,saved="1"))
+
+
+@app.post("/shop-panel/remove")
+def shop_panel_remove():
+    user=session.get("discord_user")
+    if not user or not is_admin(user["id"]): return "Forbidden",403
+    try: gid=int(request.form["guild_id"]); rid=int(request.form["role_id"])
+    except (KeyError,TypeError,ValueError): return "Invalid request",400
+    role_shop_items.delete_one({"guild_id":gid,"role_id":rid})
+    return redirect(url_for("shop_panel_page",guild=gid,removed="1"))
+
+
+@app.post("/shop/role-buy/<int:role_id>")
+def shop_role_buy_web(role_id):
+    user=session.get("discord_user"); guild=selected_guild()
+    if not user or not guild: return redirect(url_for("login"))
+    result=purchase_shop_role(int(guild["id"]),int(user["id"]),role_id)
+    return redirect(url_for("shop_page",guild=guild["id"],role_result=result))
 
 
 @app.get("/rewards")
@@ -297,6 +348,34 @@ def selected_bot_guild():
         return guilds[0]
     session.pop("daily_guild_id", None)
     return None
+
+
+def purchase_shop_role(guild_id,user_id,role_id):
+    listing=role_shop_items.find_one({"guild_id":int(guild_id),"role_id":int(role_id)})
+    if not listing: return "unavailable"
+    bot=BOT.get("instance"); guild=bot.get_guild(int(guild_id)) if bot and not bot.is_closed() else None
+    if not guild: return "offline"
+    role=guild.get_role(int(role_id))
+    if not role or role.managed or role.is_default(): return "unavailable"
+    member=get_bot_member(guild_id,user_id)
+    if member is None: return "member_missing"
+    if role in member.roles: return "owned"
+    me=guild.me
+    if me is None or not me.guild_permissions.manage_roles or role>=me.top_role: return "permissions"
+    try: role_shop_claims.insert_one({"guild_id":int(guild_id),"user_id":int(user_id),"role_id":int(role_id),"created_at":now_utc()})
+    except Exception: return "owned"
+    try:
+        asyncio.run_coroutine_threadsafe(member.add_roles(role,reason="Aureolis role shop purchase"),bot.loop).result(timeout=10)
+        charged=users.find_one_and_update({"guild_id":int(guild_id),"user_id":int(user_id),"balance":{"$gte":int(listing["price"])}},{"$inc":{"balance":-int(listing["price"])}},return_document=ReturnDocument.AFTER)
+        if charged is None:
+            asyncio.run_coroutine_threadsafe(member.remove_roles(role,reason="Role shop rollback"),bot.loop).result(timeout=10)
+            role_shop_claims.delete_one({"guild_id":int(guild_id),"user_id":int(user_id),"role_id":int(role_id)})
+            return "not_enough"
+        return "success"
+    except Exception:
+        log.exception("Role shop assignment/purchase failed")
+        role_shop_claims.delete_one({"guild_id":int(guild_id),"user_id":int(user_id),"role_id":int(role_id)})
+        return "assignment_failed"
 
 
 def get_bot_member(guild_id, user_id):
@@ -2142,8 +2221,37 @@ class HalloweenBot(commands.Cog):
                 value=item["description"],
                 inline=False,
             )
-        embed.set_footer(text="Shop catalog • More purchasing features can be added later")
+        if interaction.guild:
+            listings=await db(lambda:list(role_shop_items.find({"guild_id":interaction.guild.id}).sort("price",1)))
+            for listing in listings:
+                role=interaction.guild.get_role(int(listing["role_id"]))
+                if role: embed.add_field(name="🎭 "+role.name+" — "+format(int(listing["price"]),",")+" 🍬",value="Use /buy-role to purchase.",inline=False)
+        embed.set_footer(text="Shop catalog • /role-shop and /buy-role")
         await interaction.response.send_message(embed=embed)
+    @app_commands.command(name="role-shop", description="View roles available for Candy.")
+    async def role_shop(self,interaction:discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.",ephemeral=True); return
+        listings=await db(lambda:list(role_shop_items.find({"guild_id":interaction.guild.id}).sort("price",1)))
+        embed=discord.Embed(title="🎭 Aureolis Role Shop",color=discord.Color.purple())
+        for item in listings:
+            role=interaction.guild.get_role(int(item["role_id"]))
+            if role: embed.add_field(name=role.name+" — "+format(int(item["price"]),",")+" 🍬",value="Purchase with /buy-role.",inline=False)
+        if not embed.fields: embed.description="No roles are currently listed."
+        await interaction.response.send_message(embed=embed,ephemeral=True)
+
+    @app_commands.command(name="buy-role", description="Purchase a listed role with Candy.")
+    async def buy_role(self,interaction:discord.Interaction,role:discord.Role):
+        if not interaction.guild:
+            await interaction.response.send_message("Server only.",ephemeral=True); return
+        controls=await db(get_member_controls,interaction.guild.id,interaction.user.id)
+        if controls["blocked_from_candy"]:
+            await interaction.response.send_message("🚫 You cannot participate in Candy activities.",ephemeral=True); return
+        await db(ensure_user,interaction.guild.id,interaction.user.id,interaction.user.name,interaction.user.display_name)
+        result=await db(purchase_shop_role,interaction.guild.id,interaction.user.id,role.id)
+        msgs={"success":"🎉 Role purchased!","unavailable":"Role not listed.","offline":"Bot is offline from this server.","member_missing":"Member not found.","owned":"You already own that role.","permissions":"Bot lacks Manage Roles or role hierarchy access.","not_enough":"Not enough Candy.","assignment_failed":"Role assignment failed; purchase was not completed."}
+        await interaction.response.send_message(msgs.get(result,"Purchase failed."),ephemeral=True)
+
     @app_commands.command(name="profile", description="View your Candy profile.")
     async def profile(self, interaction: discord.Interaction):
         if not interaction.guild:
