@@ -1,57 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Profile</title><link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}"><style>*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d,#0d0917 45%,#07050d);color:#f8f7ff;font-family:Inter,system-ui,sans-serif;min-height:100vh}.wrap{max-width:1050px;margin:auto;padding:42px 22px 70px}.profile-hero{margin-top:24px;padding:34px;border:1px solid rgba(167,139,250,.2);border-radius:26px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));box-shadow:0 24px 70px rgba(0,0,0,.3);display:flex;align-items:center;gap:22px}.profile-avatar{width:88px;height:88px;flex:0 0 88px;border-radius:24px;object-fit:cover;background:#7c3aed;display:grid;place-items:center;font-size:38px}.profile-hero h1{margin:7px 0 4px;font-size:clamp(30px,5vw,48px)}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.muted{color:#aaa2b9}.handle{color:#c9c3d8}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px;margin-top:20px}.card{padding:22px;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:rgba(20,15,30,.86)}.label{color:#938aa0;font-size:12px;display:block}.value{display:block;font-size:28px;font-weight:900;margin-top:6px}.sub{display:block;color:#8f879a;font-size:12px;margin-top:5px}.info{margin-top:22px;padding:24px;border:1px solid rgba(167,139,250,.15);border-radius:20px;background:rgba(18,13,27,.8)}.info h2{margin:0 0 16px}.info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.info-item{padding:15px;border-radius:14px;background:#ffffff08}.info-item strong{display:block;font-size:13px}.info-item span{display:block;color:#aaa2b9;font-size:12px;margin-top:5px;word-break:break-word}.note{margin-top:22px;color:#aaa2b9;line-height:1.6}.button{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 18px;border-radius:12px;font-weight:800}.button:hover{background:#8b5cf6}@media(max-width:600px){.profile-hero{padding:24px;gap:16px}.profile-avatar{width:68px;height:68px;flex-basis:68px;border-radius:19px}.profile-hero h1{font-size:30px}} </style></head>
-<body><aside class="sidebar">
-  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
-  <nav class="dashboard-nav">
-<a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
-<a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a>
-<a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>
-{% endif %}
-<a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a>
-{% if session.get("discord_user") and session.get("discord_user").get("id")|int in [777341204047331348, 793723672225382452] %}<a class="{% if request.path == '/shop-panel' %}active{% endif %}" href="/shop-panel"><span>🎭</span> Shop Panel</a>{% endif %}
-<a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>{% endif %}
-<a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a>
-<a class="{% if request.path == '/daily' %}active{% endif %}" href="/daily"><span>🎁</span> Daily Reward</a>
-<a class="{% if request.path == '/halloween-quests' %}active{% endif %}" href="/halloween-quests"><span>👻</span> Halloween Quests</a>
-<a class="{% if request.path == '/statistics' %}active{% endif %}" href="/statistics"><span>📊</span> Statistics</a>
-<a class="{% if request.path == '/announcements' %}active{% endif %}" href="/announcements"><span>📢</span> Announcements</a>
-<a class="{% if request.path == '/rewards' %}active{% endif %}" href="/rewards"><span>🎁</span> Rewards</a>
-<a class="{% if request.path == '/status' %}active{% endif %}" href="/status"><span>📡</span> Status</a>
-<a class="{% if request.path == '/events' %}active{% endif %}" href="/events"><span>🎃</span> Events</a>
-{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
-<a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>
-{% endif %}
-</nav>
-  <div class="sidebar-bottom">
-      <details class="profile-menu">
-        <summary class="profile-mini">
-          {% set sidebar_user = session.get('discord_user') %}
-          {% if sidebar_user %}
-            {% if sidebar_user.get('avatar') %}
-              <img class="avatar" src="https://cdn.discordapp.com/avatars/{{ sidebar_user.get('id') }}/{{ sidebar_user.get('avatar') }}.png?size=64" alt="Discord profile picture">
-            {% else %}
-              <div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>
-            {% endif %}
-            <div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
-          {% else %}
-            <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
-          {% endif %}
-          <span class="dots">•••</span>
-        </summary>
-        <div class="profile-menu-dropdown">
-          <a href="/profile"><span>👤</span> Profile</a>
-    
-          {% if sidebar_user %}
-            <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
-          {% else %}
-            <a href="/login"><span>🔐</span> Log In</a>
-          {% endif %}
-        </div>
-      </details>
-    </div>
-  </aside>
+<body>{% include "_sidebar.html" %}
 <main class="section-main wrap">
 <section class="profile-hero">
   {% if logged_in and avatar_url %}<img class="profile-avatar" src="{{ avatar_url }}" alt="Discord avatar">{% else %}<div class="profile-avatar">🎃</div>{% endif %}
