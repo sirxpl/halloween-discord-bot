@@ -38,7 +38,7 @@
     {% elif d.state == 'error' %}
     <section class="notice err">
       <h3>⚠️ The bot is stopped</h3>
-      <p>Reason: {{ d.last_error or 'Unknown error' }}. Check the Render logs, fix the cause and redeploy.</p>
+      <p>Reason: {{ d.last_error or 'Unknown error' }}. Check the Railway logs, fix the cause and redeploy.</p>
     </section>
     {% endif %}
 
