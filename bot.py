@@ -77,7 +77,7 @@ Session(app)
 def require_web_login_screen():
     if request.method not in {"GET", "HEAD"}:
         return None
-    public_endpoints = {"home", "dashboard", "login", "oauth_callback", "logout", "status_json", "health"}
+    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health"}
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
@@ -322,7 +322,11 @@ DAILY_REWARD = 100
 ARCANE_BOT_IDS = {1217870452253397082, 437808476106784770}
 ARCANE_LEVEL_BASE_BONUS = 250
 ARCANE_LEVEL_BONUS_PER_LEVEL = 5
-ARCANE_LEVEL_PATTERN = re.compile(r"<@!?(\d+)>\s+has reached level\s+\*\*(\d+)\*\*\.\s+GG!$", re.IGNORECASE)
+ARCANE_LEVEL_PATTERN = re.compile(
+    r"<@!?(\d+)>.{0,120}?(?:has\s+reached|reached|advanced\s+to|leveled\s+up\s+to|levelled\s+up\s+to|"
+    r"level(?:ed)?\s+up\s+to|promoted\s+to|is\s+now|are\s+now)\s+level\s*[*_`]*\s*(\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 TRICK_OR_TREAT_MIN = 25
 TRICK_OR_TREAT_MAX = 150
@@ -436,7 +440,7 @@ def log_category(action):
 
 
 async def _send_discord_log(guild_id, action, username, amount, details):
-    cfg = get_logging_config(guild_id)
+    cfg = await asyncio.to_thread(get_logging_config, guild_id)
     if not cfg.get("enabled", True):
         return
     category = log_category(action)
@@ -471,7 +475,10 @@ async def _send_discord_log(guild_id, action, username, amount, details):
         elif destination["type"] == "channel":
             bot = BOT.get("instance")
             channel = bot.get_channel(int(destination.get("channel_id", 0))) if bot else None
-            if channel: await channel.send(message)
+            if channel:
+                await channel.send(message, allowed_mentions=discord.AllowedMentions.none())
+            else:
+                log.warning("Log channel %s not found for guild %s (wrong ID, or bot cannot see it).", destination.get("channel_id"), guild_id)
     except Exception:
         log.exception("Could not deliver activity log to Discord.")
 
@@ -1299,8 +1306,10 @@ def add_candy(guild_id: int, user_id: int, amount: int):
 
 intents = discord.Intents.default()
 # Arcane level-up rewards read the level-up message, so Message Content is required.
-# Keep this opt-in so the bot does not request the privileged intent until Discord allows it.
-ARCANE_LEVEL_BONUS_ENABLED = os.getenv("ARCANE_LEVEL_BONUS_ENABLED", "false").lower() == "true"
+# Enabled by default. If the Message Content intent is not switched on in the Discord Developer Portal,
+# main() falls back to running without it (embed-style level-ups still work) instead of crashing.
+ARCANE_LEVEL_BONUS_ENABLED = os.getenv("ARCANE_LEVEL_BONUS_ENABLED", "true").lower() == "true"
+ARCANE_ANNOUNCE = os.getenv("ARCANE_ANNOUNCE", "true").lower() == "true"
 intents.message_content = ARCANE_LEVEL_BONUS_ENABLED
 log.info(
     "Arcane diagnostics: ARCANE_LEVEL_BONUS_ENABLED=%s | message_content_intent=%s",
@@ -1356,6 +1365,11 @@ class HalloweenBot(commands.Cog):
 
         # Arcane can send the level-up text either as normal message content
         # or inside an embed, so inspect both formats.
+        if not message.content and not message.embeds:
+            log.warning(
+                "Arcane message arrived with no readable content. The Message Content intent is probably "
+                "not enabled in the Discord Developer Portal (Bot > Privileged Gateway Intents)."
+            )
         message_texts = []
         if message.content:
             message_texts.append(message.content)
@@ -1382,7 +1396,7 @@ class HalloweenBot(commands.Cog):
                 .replace("\u00a0", " ")
             )
             normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
-            candidate = ARCANE_LEVEL_PATTERN.fullmatch(normalized_text)
+            candidate = ARCANE_LEVEL_PATTERN.search(normalized_text)
             if candidate:
                 match = candidate
                 matched_text = normalized_text
@@ -1445,6 +1459,17 @@ class HalloweenBot(commands.Cog):
             guild_id,
             updated.get("balance", 0),
         )
+
+        if ARCANE_ANNOUNCE:
+            try:
+                await message.channel.send(
+                    f"🍬 <@{user_id}> earned **{bonus:,} Candy** for reaching level **{level}**!",
+                    allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=user_id)]),
+                )
+            except discord.Forbidden:
+                log.warning("Missing Send Messages permission in channel %s (guild %s) to announce Arcane bonus.", getattr(message.channel, "id", None), guild_id)
+            except discord.HTTPException:
+                log.exception("Could not announce Arcane level bonus.")
 
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
@@ -1773,27 +1798,49 @@ async def main():
         try:
             await bot.start(DISCORD_TOKEN)
             return
+        except discord.PrivilegedIntentsRequired:
+            await bot.close()
+            if intents.message_content:
+                log.error(
+                    "Message Content intent is NOT enabled in the Discord Developer Portal. "
+                    "Starting without it: Arcane plain-text level-ups cannot be read until you enable it "
+                    "(Developer Portal > Bot > Privileged Gateway Intents > Message Content Intent)."
+                )
+                intents.message_content = False
+                continue
+            d.update(state="error", last_error="Privileged intents not enabled")
+            await park_forever("A privileged intent is required but not enabled in the Developer Portal.")
+        except discord.LoginFailure:
+            await bot.close()
+            d.update(state="error", last_error="Invalid Discord token")
+            await park_forever("Discord rejected DISCORD_TOKEN (invalid token).")
         except discord.HTTPException as exc:
             await bot.close()
             if exc.status != 429:
                 d.update(state="error", last_error=f"Discord HTTP {exc.status}")
-                await park_forever(f"Discord returned HTTP {exc.status} during login ({exc.text[:200]!r}).")
+                await park_forever(f"Discord returned HTTP {exc.status} during login ({str(exc.text)[:200]!r}).")
             info = describe_rate_limit(exc)
             wait = retry_delay
             if info["retry_after"]:
                 wait = max(wait, min(info["retry_after"] + 5, 3600))
             log.warning(
-                "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
-                "Discord 429 during login: %s | code=%s | headers=%s | body=%r",
-                exc, info.get("code"), info.get("headers"), info.get("body")
+                "Discord 429 during login: %s | headers=%s | body=%r",
+                info["label"], info["headers"], info["body"],
             )
+            log.warning("Waiting %ss before retry #%s.", int(wait), d["attempts"] + 1)
             d.update(
                 state="rate_limited",
-                last_error=f"Discord HTTP 429; retrying in {wait} seconds",
+                rate_limit={**info, "at": now_utc()},
+                last_error=info["label"],
                 retry_until=now_utc() + timedelta(seconds=wait),
             )
             await asyncio.sleep(wait)
-            retry_delay = min(max(retry_delay * 2, 30), 3600)
+            retry_delay = min(retry_delay * 2, 600)
+        except Exception as exc:
+            await bot.close()
+            d.update(state="error", last_error=exc.__class__.__name__)
+            log.exception("Unexpected error while running the bot")
+            await park_forever("Unexpected error.")
 
 
 if __name__ == "__main__":
