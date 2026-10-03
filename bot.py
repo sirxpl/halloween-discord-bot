@@ -371,6 +371,14 @@ def purchase_shop_role(guild_id,user_id,role_id):
             asyncio.run_coroutine_threadsafe(member.remove_roles(role,reason="Role shop rollback"),bot.loop).result(timeout=10)
             role_shop_claims.delete_one({"guild_id":int(guild_id),"user_id":int(user_id),"role_id":int(role_id)})
             return "not_enough"
+        log_activity(
+            "role_shop_purchase",
+            user_id=user_id,
+            username=member.name,
+            guild_id=guild_id,
+            amount=int(listing["price"]),
+            details={"role_id": int(role_id), "role_name": role.name},
+        )
         return "success"
     except Exception:
         log.exception("Role shop assignment/purchase failed")
