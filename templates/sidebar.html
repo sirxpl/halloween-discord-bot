@@ -1,0 +1,61 @@
+{# Shared sidebar - the ONLY place nav links live. Context comes from inject_sidebar() in bot.py:
+   sidebar_user, sidebar_avatar, sidebar_is_admin. Edit links here and every page updates. #}
+{% set member_links = [
+  ('/dashboard', '⌂', 'Overview'),
+  ('/shop', '🛒', 'Shop'),
+  ('/inventory', '🎒', 'Inventory'),
+  ('/leaderboard', '🏆', 'Leaderboard'),
+  ('/daily', '🎁', 'Daily Reward'),
+  ('/halloween-quests', '👻', 'Halloween Quests'),
+  ('/statistics', '📊', 'Statistics'),
+  ('/announcements', '📢', 'Announcements'),
+  ('/rewards', '🎁', 'Rewards'),
+  ('/events', '🎃', 'Events'),
+  ('/status', '📡', 'Status'),
+] %}
+{% set guest_links = [('/dashboard', '⌂', 'Overview'), ('/status', '📡', 'Status')] %}
+{% set admin_links = [
+  ('/economy', '🍬', 'Economy'),
+  ('/logging', '📋', 'Logging'),
+  ('/users', '👥', 'Users'),
+  ('/shop-panel', '🎭', 'Shop Panel'),
+  ('/access-control', '🛡️', 'Access Control'),
+] %}
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
+  <nav class="dashboard-nav">
+    {% for href, icon, label in (member_links if sidebar_user else guest_links) %}
+    <a class="{{ 'active' if request.path == href or request.path.startswith(href ~ '/') }}" href="{{ href }}"><span>{{ icon }}</span> {{ label }}</a>
+    {% endfor %}
+    {% if sidebar_user and sidebar_is_admin %}
+    <div class="nav-label">Admin</div>
+    {% for href, icon, label in admin_links %}
+    <a class="{{ 'active' if request.path == href or request.path.startswith(href ~ '/') }}" href="{{ href }}"><span>{{ icon }}</span> {{ label }}</a>
+    {% endfor %}
+    {% endif %}
+    {% if not sidebar_user %}
+    <a class="nav-login" href="/login"><span>🔐</span> Log in for more</a>
+    {% endif %}
+  </nav>
+  <div class="sidebar-bottom">
+    <details class="profile-menu">
+      <summary class="profile-mini">
+        {% if sidebar_user %}
+          {% if sidebar_avatar %}<img class="avatar" src="{{ sidebar_avatar }}" alt="Discord profile picture">{% else %}<div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div>{% endif %}
+          <div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>
+        {% else %}
+          <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
+        {% endif %}
+        <span class="dots">•••</span>
+      </summary>
+      <div class="profile-menu-dropdown">
+        {% if sidebar_user %}
+          <a href="/profile"><span>👤</span> Profile</a>
+          <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
+        {% else %}
+          <a href="/login"><span>🔐</span> Log In</a>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+</aside>
