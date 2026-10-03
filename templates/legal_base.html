@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Legal{% endblock %} • Aureolis</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
+</head>
+<body>
+  <div class="glow glow-one"></div>
+  <div class="glow glow-two"></div>
+  <main>
+    <nav>
+      <a class="brand brand-link" href="/"><span class="brand-logo" aria-hidden="true">🎃</span><div><strong>Aureolis</strong><small>Halloween Event</small></div></a>
+      <a class="nav-link" href="/">← Back to home</a>
+    </nav>
+
+    <article class="legal">
+      <span class="eyebrow">{% block eyebrow %}LEGAL{% endblock %}</span>
+      <h1 class="legal-title">{% block heading %}{% endblock %}</h1>
+      <p class="legal-updated">Last updated: October 3, 2026</p>
+      {% block content %}{% endblock %}
+      <div class="legal-switch">
+        <a href="/terms" class="{{ 'current' if request.path == '/terms' }}">Terms of Service</a>
+        <a href="/privacy" class="{{ 'current' if request.path == '/privacy' }}">Privacy Policy</a>
+        <a href="/">Back to home</a>
+      </div>
+    </article>
+
+    <footer>🎃 Aureolis Halloween Bot <span>•</span> <a href="/terms">Terms of Service</a> <span>•</span> <a href="/privacy">Privacy Policy</a></footer>
+  </main>
+</body>
+</html>
