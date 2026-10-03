@@ -49,7 +49,7 @@
     <div class="reward-icon">🍬</div>
     <div class="reward">+{{ daily_reward }} Candy</div>
     {% if daily_boost %}
-      <div class="cooldown">Your {{ daily_boost.role_name }} role gives you a <strong>{{ daily_boost.multiplier:g }}× boost</strong>.</div>
+      <div class="cooldown">Your {{ daily_boost.role_name }} role gives you a <strong>{{ '%.1f'|format(daily_boost.multiplier) }}× boost</strong>.</div>
     {% endif %}
     <div class="cooldown">Available once every 24 hours</div>
     {% if not user %}
@@ -69,7 +69,7 @@
         Claims from the dashboard and <strong>/daily</strong> use the same MongoDB reward record, so the cooldown stays synchronized.
       </div>
       {% if request.args.get("claimed") %}
-        <div class="success">🎉 Reward claimed! You received <strong>+{{ daily_reward }} 🍬 Candy</strong>{% if daily_boost %} with your {{ daily_boost.multiplier:g }}× boost{% endif %}.</div>
+        <div class="success">🎉 Reward claimed! You received <strong>+{{ daily_reward }} 🍬 Candy</strong>{% if daily_boost %} with your {{ '%.1f'|format(daily_boost.multiplier) }}× boost{% endif %}.</div>
       {% elif daily_error == "cooldown" %}
         <div class="status cooldown-box">⏰ You already claimed your daily reward. Your next claim is shown below.</div>
       {% elif daily_error == "restricted" %}
