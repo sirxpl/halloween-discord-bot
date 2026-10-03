@@ -1302,6 +1302,11 @@ intents = discord.Intents.default()
 # Keep this opt-in so the bot does not request the privileged intent until Discord allows it.
 ARCANE_LEVEL_BONUS_ENABLED = os.getenv("ARCANE_LEVEL_BONUS_ENABLED", "false").lower() == "true"
 intents.message_content = ARCANE_LEVEL_BONUS_ENABLED
+log.info(
+    "Arcane diagnostics: ARCANE_LEVEL_BONUS_ENABLED=%s | message_content_intent=%s",
+    os.getenv("ARCANE_LEVEL_BONUS_ENABLED", "<unset>"),
+    intents.message_content,
+)
 
 
 class AccessControlledTree(app_commands.CommandTree):
@@ -1338,6 +1343,16 @@ class HalloweenBot(commands.Cog):
             return
         if message.guild is None or message.author.id not in ARCANE_BOT_IDS:
             return
+
+        log.info(
+            "Arcane diagnostics: author_id=%s guild_id=%s channel_id=%s content_len=%s embeds=%s message_content_intent=%s",
+            message.author.id,
+            message.guild.id,
+            getattr(message.channel, "id", None),
+            len(message.content or ""),
+            len(message.embeds),
+            self.bot.intents.message_content,
+        )
 
         # Arcane can send the level-up text either as normal message content
         # or inside an embed, so inspect both formats.
@@ -1401,12 +1416,12 @@ class HalloweenBot(commands.Cog):
             user_id,
             f"<@{user_id}>",
             guild_id,
-            ARCANE_LEVEL_BONUS,
+            bonus,
             {"level": level, "source_bot_id": message.author.id},
         )
         log.info(
             "Awarded %s Candy to user %s for Arcane level %s in guild %s. New balance: %s",
-            ARCANE_LEVEL_BONUS,
+            bonus,
             user_id,
             level,
             guild_id,
