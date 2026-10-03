@@ -379,7 +379,10 @@ def bot_guilds():
 
 
 def selected_bot_guild():
-    guilds = bot_guilds()
+    """Return a bot-connected guild that the signed-in Discord user actually belongs to."""
+    bot_guild_list = bot_guilds()
+    user_guild_ids = {str(g.get("id")) for g in session.get("discord_guilds", [])}
+    guilds = [g for g in bot_guild_list if str(g.get("id")) in user_guild_ids]
     wanted = str(request.args.get("guild") or session.get("daily_guild_id") or "")
     guild = next((g for g in guilds if str(g.get("id")) == wanted), None)
     if guild:
@@ -1543,22 +1546,42 @@ def statistics_page():
 @app.get("/daily")
 def daily_page():
     user = session.get("discord_user")
-    guilds = bot_guilds()
-    guild = selected_bot_guild() if user else None
+    guilds = []
+    guild = None
     profile = None
     next_daily = None
-    if user and guild:
-        profile = users.find_one({"guild_id": int(guild["id"]), "user_id": int(user["id"])})
-        if profile and profile.get("last_daily"):
-            next_daily = profile["last_daily"] + timedelta(hours=24)
+    daily_reward = get_economy_config()["daily_reward"]
+    boost = None
+    reward = daily_reward
+    if user:
+        # Only show servers that both the bot and the signed-in user share.
+        guilds = [g for g in bot_guilds()
+                  if str(g["id"]) in {str(x.get("id")) for x in session.get("discord_guilds", [])}]
+        guild = selected_bot_guild()
+        if guild:
+            guild_id = int(guild["id"])
+            user_id = int(user["id"])
+            profile = users.find_one({"guild_id": guild_id, "user_id": user_id})
+            if profile and profile.get("last_daily"):
+                candidate = profile["last_daily"] + timedelta(hours=24)
+                if candidate > now_utc():
+                    next_daily = candidate
+            member = get_bot_member(guild_id, user_id)
+            if member:
+                reward, boost = calculate_daily_reward(
+                    daily_reward, [role.id for role in member.roles], guild_id
+                )
     return render_template(
         "daily.html",
         user=user,
         guild=guild,
         profile=profile,
         next_daily=next_daily,
-        daily_reward=get_economy_config()["daily_reward"],
+        daily_reward=reward,
+        base_daily_reward=daily_reward,
+        daily_boost=boost,
         daily_guilds=guilds,
+        daily_error=request.args.get("error"),
     )
 
 
@@ -1575,9 +1598,18 @@ def daily_claim():
     user_id = int(user["id"])
     if get_member_controls(guild_id, user_id)["blocked_from_candy"]:
         return redirect(url_for("daily_page", guild=guild_id, error="restricted"))
+
+    # Do not allow a dashboard claim unless the user is actually a member
+    # of the selected server. This also prevents awarding Candy to an
+    # account in a server they cannot access.
     member = get_bot_member(guild_id, user_id)
-    role_ids = [role.id for role in member.roles] if member else []
-    reward, boost = calculate_daily_reward(get_economy_config()["daily_reward"], role_ids, guild_id)
+    if member is None:
+        return redirect(url_for("daily_page", guild=guild_id, error="not_member"))
+
+    config = get_economy_config()
+    reward, boost = calculate_daily_reward(
+        config["daily_reward"], [role.id for role in member.roles], guild_id
+    )
     now = now_utc()
     ensure_user(
         guild_id,
@@ -1600,15 +1632,20 @@ def daily_claim():
     )
     if not updated:
         return redirect(url_for("daily_page", guild=guild_id, error="cooldown"))
+
     log_activity(
         "daily",
         user_id=user_id,
         username=user.get("username"),
         guild_id=guild_id,
         amount=reward,
-        details={"boost_role": boost.get("role_name") if boost else None, "multiplier": boost.get("multiplier") if boost else 1, "source": "web_daily"},
+        details={
+            "boost_role": boost.get("role_name") if boost else None,
+            "multiplier": boost.get("multiplier") if boost else 1,
+            "source": "web_daily",
+        },
     )
-    return redirect(url_for("daily_page", guild=guild_id, claimed="1", reward=reward, boost=boost.get("role_name") if boost else ""))
+    return redirect(url_for("daily_page", guild=guild_id, claimed="1"))
 
 
 @app.get("/leaderboard")
