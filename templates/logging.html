@@ -1,9 +1,30 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Logging</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261002') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261003') }}">
 <style>
-.section-main{padding:36px;max-width:1100px}.hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:18px}.hero{padding:30px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12))}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.hero h1{font-size:44px;margin:10px 0}.hero p,.meta,.muted{color:#aaa2b9}.card{margin-top:20px;padding:20px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field{display:grid;gap:7px}.field label{font-size:12px;font-weight:800;color:#c9c3d8}.field input,.field select{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#11111a;color:#eee;font:inherit}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.btn{padding:11px 15px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#7c3aed;color:#fff;font-weight:800;cursor:pointer}.btn.alt{background:#171722}.advanced{display:none;margin-top:18px}.advanced.open{display:block}.cat{padding:14px 0;border-bottom:1px solid rgba(255,255,255,.07)}.cat:last-child{border-bottom:0}.row{padding:15px 0;border-bottom:1px solid rgba(255,255,255,.07)}.row:last-child{border-bottom:0}.back{color:#c4b5fd;text-decoration:none;display:inline-block;margin-bottom:20px}.notice{padding:11px 13px;border-radius:10px;background:#163523;color:#86efac;margin-bottom:15px}.error{background:#3b2020;color:#fca5a5}.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.025);margin-top:16px}.toggle-copy strong{display:block}.toggle-copy span{display:block;margin-top:4px;font-size:13px;color:#aaa2b9}.switch{position:relative;width:52px;height:30px;flex:0 0 auto}.switch input{opacity:0;width:0;height:0}.slider{position:absolute;inset:0;border-radius:999px;background:#3a3545;cursor:pointer;transition:.2s}.slider:before{content:"";position:absolute;width:22px;height:22px;left:4px;top:4px;border-radius:50%;background:#fff;transition:.2s}.switch input:checked+.slider{background:#7c3aed}.switch input:checked+.slider:before{transform:translateX(22px)}
-@media(max-width:700px){.grid{grid-template-columns:1fr}.section-main{padding:22px}.hero h1{font-size:36px}}
+.section-main{padding:36px;max-width:1100px}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}
+.hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:18px}
+.hero{padding:30px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12))}.hero h1{font-size:40px;margin:10px 0}
+.hero p,.meta,.muted{color:#aaa2b9}.card{margin-top:20px;padding:22px}.card h2{margin:0 0 4px}.card h3{margin:0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.cats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.field{display:grid;gap:7px}.field label{font-size:12px;font-weight:800;color:#c9c3d8}
+.field input,.field select{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#11111a;color:#eee;font:inherit}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn{padding:11px 16px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#7c3aed;color:#fff;font-weight:800;cursor:pointer;font:inherit;font-weight:800}.btn.alt{background:#171722}
+.back{color:#c4b5fd;text-decoration:none;display:inline-block;margin-bottom:20px}
+.flash{padding:12px 14px;border-radius:10px;margin:16px 0 0;font-size:13px;line-height:1.5}.flash.ok{background:#163523;color:#86efac}.flash.err{background:#3b2020;color:#fca5a5}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.025);margin-top:16px}
+.toggle-copy strong{display:block}.toggle-copy span{display:block;margin-top:4px;font-size:13px;color:#aaa2b9}
+.switch{position:relative;width:52px;height:30px;flex:0 0 auto}.switch input{opacity:0;width:0;height:0}.slider{position:absolute;inset:0;border-radius:999px;background:#3a3545;cursor:pointer;transition:.2s}
+.slider:before{content:"";position:absolute;width:22px;height:22px;left:4px;top:4px;border-radius:50%;background:#fff;transition:.2s}.switch input:checked+.slider{background:#7c3aed}.switch input:checked+.slider:before{transform:translateX(22px)}
+.seg{display:inline-flex;background:#11111a;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:3px;margin-top:12px}.seg label{padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;color:#aaa2b9}.seg input{display:none}.seg input:checked+span{color:#fff}.seg label:has(input:checked){background:#7c3aed;color:#fff}
+.dest{border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;background:rgba(255,255,255,.02)}.dest-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.dest-head small{color:#8f879f;display:block;margin-top:3px;font-size:12px}.dest .field{margin-top:12px}.hide{display:none!important}
+.badge{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:99px;white-space:nowrap}.badge.ok{background:#163523;color:#86efac}.badge.err{background:#3b1717;color:#fca5a5}.badge.idle{background:#232030;color:#9b94ad}
+.delivery{font-size:12px;color:#aaa2b9;margin-top:10px;line-height:1.5}.secret{font-size:12px;color:#c4b5fd;margin-top:8px;word-break:break-all}
+.advanced{display:none;margin-top:22px}.advanced.open{display:block}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.chip{padding:7px 12px;border-radius:99px;border:1px solid rgba(255,255,255,.1);color:#c9c3d8;text-decoration:none;font-size:12px;font-weight:700;background:#14121c}.chip.active{background:#7c3aed;border-color:#7c3aed;color:#fff}
+.row{padding:14px 0;border-bottom:1px solid rgba(255,255,255,.07);display:flex;gap:12px}.row:last-child{border-bottom:0}.row-emoji{font-size:20px;width:28px;text-align:center}.row-main{min-width:0}.row-main .meta{font-size:12px;margin-top:3px;word-break:break-word}
+@media(max-width:800px){.grid,.cats{grid-template-columns:1fr}.section-main{padding:22px}.hero h1{font-size:32px}}
 </style></head>
 <body><aside class="sidebar"><div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div><nav class="dashboard-nav">
 <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
@@ -13,21 +34,63 @@
 <a href="/shop"><span>🛒</span> Shop</a><a href="/inventory"><span>🎒</span> Inventory</a>{% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>{% endif %}<a href="/leaderboard"><span>🏆</span> Leaderboard</a><a href="/daily"><span>🎁</span> Daily Reward</a><a href="/halloween-quests"><span>👻</span> Halloween Quests</a><a href="/statistics"><span>📊</span> Statistics</a><a href="/announcements"><span>📢</span> Announcements</a><a href="/rewards"><span>🎁</span> Rewards</a><a href="/status"><span>📡</span> Status</a><a href="/events"><span>🎃</span> Events</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a href="/access-control"><span>🛡️</span> Access Control</a>{% endif %}
 </nav><div class="sidebar-bottom"><details class="profile-menu"><summary class="profile-mini">{% set sidebar_user=session.get('discord_user') %}{% if sidebar_user %}<div class="avatar">{{ (sidebar_user.get('global_name') or sidebar_user.get('username') or '?')[:1].upper() }}</div><div><strong>{{ sidebar_user.get('global_name') or sidebar_user.get('username') }}</strong><span>@{{ sidebar_user.get('username') }}</span></div>{% else %}<div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>{% endif %}<span class="dots">•••</span></summary><div class="profile-menu-dropdown"><a href="/profile">👤 Profile</a>{% if sidebar_user %}<a class="logout" href="/logout">🚪 Log Out</a>{% else %}<a href="/login">🔐 Log In</a>{% endif %}</div></details></div></aside>
-<main class="section-main"><a class="back" href="/dashboard">← Back to dashboard</a><section class="hero"><div class="eyebrow">🎃 AUREOLIS • AUDIT TRAIL</div><h1>📋 Logging</h1><p>Persistent activity history plus configurable Discord log delivery.</p></section>
-<section class="card"><h2>Discord log delivery</h2><p class="muted">Choose a server the bot is currently in, then control whether its logs are delivered.</p>
-{% if request.args.get('saved') %}<div class="notice">✓ Logging settings saved.</div>{% endif %}{% if request.args.get('tested') %}<div class="notice">✓ Test log queued.</div>{% endif %}{% if request.args.get('error') %}<div class="notice error">Could not save/test the logging configuration. Check the values and try again.</div>{% endif %}
-<form method="get" action="/logging"><div class="grid"><div class="field"><label>Server the bot is in</label><select name="guild" onchange="this.form.submit()">{% for guild in logging_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == logging_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}</select></div><div class="field"><label>Mode</label><select name="mode_preview" disabled><option>{{ 'Advanced' if logging_config.mode == 'advanced' else 'Simple' }}</option></select></div></div></form>
+{% macro status_badge(key) %}{% set d = logging_config.delivery.get(key) %}{% if d %}<span class="badge {{ 'ok' if d.ok else 'err' }}">{{ '✓ Working' if d.ok else '✗ Failing' }}</span>{% else %}<span class="badge idle">Not tested</span>{% endif %}{% endmacro %}
+{% macro status_text(key) %}{% set d = logging_config.delivery.get(key) %}{% if d %}<div class="delivery">Last delivery: {{ d.message }}{% if d.at %} · {{ d.at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</div>{% endif %}{% endmacro %}
+{% macro dest_fields(prefix, current, allow_inherit) %}
+{% set typ = current.type if current else ('inherit' if allow_inherit else 'channel') %}
+<div class="field"><label>Destination</label>
+<select name="{{ prefix }}_type" data-dest-type>
+{% if allow_inherit %}<option value="inherit" {{ 'selected' if typ=='inherit' }}>Use main destination</option>{% endif %}
+<option value="channel" {{ 'selected' if typ=='channel' }}>Discord channel</option>
+<option value="webhook" {{ 'selected' if typ=='webhook' }}>Webhook</option>
+{% if allow_inherit %}<option value="off" {{ 'selected' if typ=='off' }}>Don't log this category</option>{% endif %}
+</select></div>
+<div class="field" data-show="channel"><label>Channel</label><select name="{{ prefix }}_channel_id">
+{% for channel in logging_channels %}<option value="{{ channel.id }}" {{ 'selected' if current and current.channel_id|string == channel.id|string }}>#{{ channel.name }}</option>{% endfor %}</select></div>
+<div class="field" data-show="webhook"><label>Webhook URL</label>
+<input name="{{ prefix }}_webhook_url" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the current webhook' if current and current.type=='webhook' else 'https://discord.com/api/webhooks/…' }}">
+{% if current and current.type=='webhook' and masked_webhooks.get(prefix) %}<div class="secret">Current: {{ masked_webhooks[prefix] }}</div>{% endif %}</div>
+{% endmacro %}
+<main class="section-main"><a class="back" href="/dashboard">← Back to dashboard</a>
+<section class="hero"><div class="eyebrow">🎃 AUREOLIS • AUDIT TRAIL</div><h1>📋 Logging</h1><p>Activity history plus Discord log delivery, sent as clean Components&nbsp;V2 cards.</p></section>
+
+<section class="card"><h2>Delivery settings</h2><p class="muted">Pick a server, choose where logs go, and send a test to confirm it works.</p>
+{% if flash %}<div class="flash {{ flash.kind }}">{{ flash.text }}</div>{% endif %}
+<form method="get" action="/logging" style="margin-top:16px"><div class="field" style="max-width:380px"><label>Server</label>
+<select name="guild" onchange="this.form.submit()">{% for guild in logging_guilds %}<option value="{{ guild.id }}" {{ 'selected' if guild.id|string == logging_guild_id|string }}>{{ guild.name }}</option>{% endfor %}</select></div></form>
+
 <form method="post" action="/logging/settings" id="logging-form">
 <input type="hidden" name="guild_id" value="{{ logging_guild_id }}">
-<div class="toggle-row"><div class="toggle-copy"><strong>Logging</strong><span>Turn Discord log delivery on or off for this server. Activity history remains stored in the dashboard.</span></div><label class="switch"><input type="checkbox" name="enabled" {% if logging_config.enabled %}checked{% endif %}><span class="slider"></span></label></div><div class="grid" style="margin-top:14px"><div class="field"><label>Logging mode</label><select name="mode" id="mode"><option value="simple" {% if logging_config.mode=='simple' %}selected{% endif %}>Simple — all logs in one place</option><option value="advanced" {% if logging_config.mode=='advanced' %}selected{% endif %}>Advanced — separate destinations</option></select></div>
-<div class="field"><label>Main destination</label><select name="destination_type" id="destination_type"><option value="channel" {% if logging_config.main.type=='channel' %}selected{% endif %}>Discord channel</option><option value="webhook" {% if logging_config.main.type=='webhook' %}selected{% endif %}>Webhook</option></select></div></div>
-<div class="grid" style="margin-top:14px"><div class="field"><label>Main channel</label><select name="channel_id">{% for channel in logging_channels %}<option value="{{ channel.id }}" {% if logging_config.main.channel_id|string == channel.id|string %}selected{% endif %}>#{{ channel.name }}</option>{% endfor %}</select></div><div class="field"><label>Main webhook URL</label><input name="webhook_url" type="password" placeholder="{% if logging_config.main.type=='webhook' %}Webhook configured — enter a new one to replace it{% else %}https://discord.com/api/webhooks/...{% endif %}" autocomplete="new-password"></div></div>
-<div class="advanced {% if logging_config.mode=='advanced' %}open{% endif %}" id="advanced"><h3>Advanced destinations</h3><p class="muted">Categories without an override inherit the main destination.</p>
-{% for category in log_categories %}<div class="cat"><strong>{{ category.replace('_',' ')|title }}</strong><div class="grid" style="margin-top:10px"><select name="{{ category }}_type"><option value="inherit">Use main destination</option><option value="channel">Separate channel</option><option value="webhook">Separate webhook</option></select><select name="{{ category }}_channel_id">{% for channel in logging_channels %}<option value="{{ channel.id }}">#{{ channel.name }}</option>{% endfor %}</select></div><input name="{{ category }}_webhook_url" type="password" placeholder="Optional separate webhook URL" style="margin-top:10px;width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#11111a;color:#eee"></div>{% endfor %}</div>
-<div class="actions"><button class="btn" type="submit">Save logging settings</button></div></form>
-<form method="post" action="/logging/test" class="actions"><input type="hidden" name="guild_id" value="{{ logging_guild_id }}"><button class="btn alt" type="submit">🧪 Send test log</button></form>
+<div class="toggle-row"><div class="toggle-copy"><strong>Discord log delivery</strong><span>Turn delivery on or off for this server. Activity history stays saved either way.</span></div>
+<label class="switch"><input type="checkbox" name="enabled" {{ 'checked' if logging_config.enabled }}><span class="slider"></span></label></div>
+
+<div class="seg" role="radiogroup" aria-label="Logging mode">
+<label><input type="radio" name="mode" value="simple" {{ 'checked' if logging_config.mode!='advanced' }}><span>Simple · one destination</span></label>
+<label><input type="radio" name="mode" value="advanced" {{ 'checked' if logging_config.mode=='advanced' }}><span>Advanced · per category</span></label></div>
+
+<div class="dest" style="margin-top:16px"><div class="dest-head"><div><h3>Main destination</h3><small>Used for everything in Simple mode, and for any category without an override.</small></div>{{ status_badge('main') }}</div>
+{{ dest_fields('main', logging_config.main, false) }}{{ status_text('main') }}</div>
+
+<div class="advanced {{ 'open' if logging_config.mode=='advanced' }}" id="advanced"><h3>Category overrides</h3><p class="muted">Send a category somewhere else, or switch it off entirely.</p>
+<div class="cats">{% for category in log_categories %}{% set meta = category_meta[category] %}{% set current = logging_config.advanced.get(category) %}
+<div class="dest"><div class="dest-head"><div><h3>{{ meta.emoji }} {{ meta.label }}</h3><small>{{ meta.desc }}</small></div>{% if current and current.type in ('channel','webhook') %}{{ status_badge(category) }}{% endif %}</div>
+{{ dest_fields(category, current, true) }}{% if current and current.type in ('channel','webhook') %}{{ status_text(category) }}{% endif %}</div>{% endfor %}</div></div>
+
+<div class="actions"><button class="btn" type="submit">Save settings</button></div></form>
+<form method="post" action="/logging/test" class="actions" style="margin-top:10px"><input type="hidden" name="guild_id" value="{{ logging_guild_id }}"><button class="btn alt" type="submit">🧪 Send test log</button></form>
 </section>
-<section class="card"><h2>Recent activity</h2>{% for item in logs %}<div class="row"><strong>{{ item.action|replace("_"," ")|title }}</strong>{% if item.username %} • {{ item.username }}{% endif %}{% if item.amount is not none %} • {{ item.amount|int }} 🍬{% endif %}<div class="meta">{% if item.guild_id %}Guild {{ item.guild_id }} • {% endif %}{% if item.created_at %}{{ item.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}{% endif %}{% if item.details %} • {{ item.details }}{% endif %}</div></div>{% else %}<p class="meta">No activity has been logged yet.</p>{% endfor %}</section></main>
+
+<section class="card"><h2>Recent activity</h2>
+<div class="chips"><a class="chip {{ 'active' if not active_category }}" href="/logging?guild={{ logging_guild_id }}">All</a>
+{% for category in log_categories %}<a class="chip {{ 'active' if active_category==category }}" href="/logging?guild={{ logging_guild_id }}&cat={{ category }}">{{ category_meta[category].emoji }} {{ category_meta[category].label }}</a>{% endfor %}</div>
+{% for item in logs %}{% set info = event_info(item.action) %}<div class="row"><div class="row-emoji">{{ info.emoji }}</div><div class="row-main"><strong>{{ info.title }}</strong>{% if item.amount is not none %} · {{ item.amount|int }} 🍬{% endif %}
+<div class="meta">{% if item.username %}{{ item.username }}{% elif item.user_id %}User {{ item.user_id }}{% endif %}{% if item.created_at %}{{ ' · ' if (item.username or item.user_id) }}{{ item.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}{% endif %}{% set summary = activity_summary(item) %}{% if summary %}<br>{{ summary }}{% endif %}</div></div></div>
+{% else %}<p class="meta">Nothing logged here yet.</p>{% endfor %}</section></main>
+
 <script>
-const mode=document.getElementById("mode"),advanced=document.getElementById("advanced"); mode?.addEventListener("change",()=>advanced.classList.toggle("open",mode.value==="advanced"));
+function sync(block){const sel=block.querySelector('[data-dest-type]');if(!sel)return;const v=sel.value;
+ block.querySelectorAll('[data-show]').forEach(el=>el.classList.toggle('hide',el.dataset.show!==v));}
+document.querySelectorAll('.dest').forEach(b=>{sync(b);b.querySelector('[data-dest-type]')?.addEventListener('change',()=>sync(b));});
+const adv=document.getElementById('advanced');
+document.querySelectorAll('input[name=mode]').forEach(r=>r.addEventListener('change',()=>adv.classList.toggle('open',r.value==='advanced'&&r.checked)));
 </script></body></html>
