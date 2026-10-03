@@ -1563,7 +1563,12 @@ def daily_page():
             user_id = int(user["id"])
             profile = users.find_one({"guild_id": guild_id, "user_id": user_id})
             if profile and profile.get("last_daily"):
-                candidate = profile["last_daily"] + timedelta(hours=24)
+                candidate = profile["last_daily"]
+                # MongoDB may return older timestamps as naive datetimes.
+                # Normalize them to UTC before comparing with now_utc().
+                if candidate.tzinfo is None:
+                    candidate = candidate.replace(tzinfo=timezone.utc)
+                candidate = candidate + timedelta(hours=24)
                 if candidate > now_utc():
                     next_daily = candidate
             member = get_bot_member(guild_id, user_id)
