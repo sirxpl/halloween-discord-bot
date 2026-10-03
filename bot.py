@@ -89,6 +89,23 @@ def require_web_login_screen():
     return None
 
 
+@app.context_processor
+def inject_sidebar():
+    """Single source of truth for the shared sidebar (templates/_sidebar.html)."""
+    user = session.get("discord_user")
+    admin = False
+    if user:
+        try:
+            admin = is_admin(user["id"])
+        except (KeyError, TypeError, ValueError):
+            admin = False
+    return {
+        "sidebar_user": user,
+        "sidebar_avatar": discord_avatar_url(user) if user else None,
+        "sidebar_is_admin": admin,
+    }
+
+
 @app.get("/")
 def home():
     return render_template("home.html")
