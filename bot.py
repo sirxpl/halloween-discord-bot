@@ -82,7 +82,7 @@ Session(app)
 def require_web_login_screen():
     if request.method not in {"GET", "HEAD"}:
         return None
-    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health"}
+    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page"}
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
@@ -102,6 +102,16 @@ def _template_alias_loader(name):
 
 
 app.jinja_loader = ChoiceLoader([app.jinja_loader, FunctionLoader(_template_alias_loader)])
+
+
+@app.get("/terms")
+def terms_page():
+    return render_template("terms.html")
+
+
+@app.get("/privacy")
+def privacy_page():
+    return render_template("privacy.html")
 
 
 @app.context_processor
