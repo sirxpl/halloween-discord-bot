@@ -1,1 +1,48 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Shop Panel</title><link rel="stylesheet" href="{{ url_for('static',filename='dashboard.css',v='20261003') }}"><style>.wrap{max-width:1000px;margin:auto}.card{background:#12121c;border:1px solid #29293a;border-radius:16px;padding:24px;margin:20px 0}.field{padding:12px;background:#171722;color:#fff;border:1px solid #343447;border-radius:9px;width:100%;margin:8px 0}.row{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid #29293a;padding:14px;border-radius:10px;margin-top:10px}.btn{padding:11px 15px;background:#163523;color:#86efac;border:1px solid #245b3b;border-radius:9px;cursor:pointer}@media(max-width:650px){.row{display:block}}</style></head><body><aside class="sidebar"><div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div><nav class="dashboard-nav"><a href="/dashboard">⌂ Overview</a><a href="/shop">🛒 Shop</a><a class="active" href="/shop-panel">🎭 Shop Panel</a><a href="/inventory">🎒 Inventory</a></nav></aside><main class="dashboard-main wrap"><div class="eyebrow">AUREOLIS • ADMIN CONTROL</div><h1>🎭 Shop Panel</h1><p style="color:#aaaabd">Configure Discord roles members can purchase with Candy.</p>{% if request.args.get('saved') %}<p>✅ Listing saved.</p>{% endif %}{% if request.args.get('removed') %}<p>🗑️ Listing removed.</p>{% endif %}{% if request.args.get('error') %}<p style="color:#fca5a5">Invalid role or price. Enter a positive whole number.</p>{% endif %}<section class="card"><h2>Select server</h2>{% if bot_guilds %}<form method="get"><select class="field" name="guild" onchange="this.form.submit()">{% for g in bot_guilds %}<option value="{{ g.id }}" {% if g.id|string==guild_id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></form><h2>Add or update role</h2><form method="post" action="/shop-panel/save"><input type="hidden" name="guild_id" value="{{ guild_id }}"><select class="field" name="role_id" required><option value="">Choose a role</option>{% for role in roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select><input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" required><button class="btn">Save listing</button></form>{% else %}<p>Bot is not connected to any servers.</p>{% endif %}</section><section class="card"><h2>Configured roles</h2>{% for item in listings %}<div class="row"><div><strong>🎭 {{ item.role_name }}</strong><div style="color:#aaaabd">Role ID {{ item.role_id }} · 🍬 {{ "{:,}".format(item.price) }}</div></div><form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="role_id" value="{{ item.role_id }}"><button class="btn" type="submit">Remove</button></form></div>{% else %}<p style="color:#aaaabd">No role listings configured for this server.</p>{% endfor %}</section></main></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Shop Panel</title><link rel="stylesheet" href="{{ url_for('static',filename='dashboard.css',v='20261003') }}"><style>.wrap{max-width:1000px;margin:auto}.card{background:#12121c;border:1px solid #29293a;border-radius:16px;padding:24px;margin:20px 0}.field{padding:12px;background:#171722;color:#fff;border:1px solid #343447;border-radius:9px;width:100%;margin:8px 0}.row{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid #29293a;padding:14px;border-radius:10px;margin-top:10px}.btn{padding:11px 15px;background:#163523;color:#86efac;border:1px solid #245b3b;border-radius:9px;cursor:pointer}@media(max-width:650px){.row{display:block}}</style></head><body><aside class="sidebar">
+    <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
+    <nav class="dashboard-nav">
+      <a class="{% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><span>⌂</span> Overview</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/economy' %}active{% endif %}" href="/economy"><span>🍬</span> Economy</a>
+      <a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>
+      {% endif %}
+      <a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a>
+{% if session.get("discord_user") and session.get("discord_user").get("id")|int in [777341204047331348, 793723672225382452] %}<a class="{% if request.path == '/shop-panel' %}active{% endif %}" href="/shop-panel"><span>🎭</span> Shop Panel</a>{% endif %}
+      <a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>
+      {% endif %}
+      <a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a>
+      <a class="{% if request.path == '/daily' %}active{% endif %}" href="/daily"><span>🎁</span> Daily Reward</a>
+      <a class="{% if request.path == '/halloween-quests' %}active{% endif %}" href="/halloween-quests"><span>👻</span> Halloween Quests</a>
+      <a class="{% if request.path == '/statistics' %}active{% endif %}" href="/statistics"><span>📊</span> Statistics</a>
+      <a class="{% if request.path == '/announcements' %}active{% endif %}" href="/announcements"><span>📢</span> Announcements</a>
+      <a class="{% if request.path == '/rewards' %}active{% endif %}" href="/rewards"><span>🎁</span> Rewards</a>
+      <a class="{% if request.path == '/status' %}active{% endif %}" href="/status"><span>📡</span> Status</a>
+      <a class="{% if request.path == '/events' %}active{% endif %}" href="/events"><span>🎃</span> Events</a>
+      {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}
+      <a class="{% if request.path == '/access-control' %}active{% endif %}" href="/access-control"><span>🛡️</span> Access Control</a>
+      {% endif %}
+    </nav>
+    <div class="sidebar-bottom">
+      <details class="profile-menu">
+        <summary class="profile-mini">
+          {% if user %}
+            {% if avatar_url %}<img class="avatar" src="{{ avatar_url }}" alt="{{ user.get('username', 'Discord user') }}'s profile picture">{% else %}<div class="avatar">{{ user.get('username', '?')[:1].upper() }}</div>{% endif %}
+            <div><strong>{{ user.get('global_name') or user.get('username') }}</strong><span>@{{ user.get('username') }}</span></div>
+          {% else %}
+            <div class="avatar">?</div><div><strong>Guest</strong><span>Not logged in</span></div>
+          {% endif %}
+          <span class="dots">•••</span>
+        </summary>
+        <div class="profile-menu-dropdown">
+          <a href="/profile"><span>👤</span> Profile</a>
+          {% if user %}
+            <a class="logout" href="/logout"><span>🚪</span> Log Out</a>
+          {% else %}
+            <a href="/login"><span>🔐</span> Log In</a>
+          {% endif %}
+        </div>
+      </details>
+    </div>
+  </aside><main class="dashboard-main wrap"><div class="eyebrow">AUREOLIS • ADMIN CONTROL</div><h1>🎭 Shop Panel</h1><p style="color:#aaaabd">Configure Discord roles members can purchase with Candy.</p>{% if request.args.get('saved') %}<p>✅ Listing saved.</p>{% endif %}{% if request.args.get('removed') %}<p>🗑️ Listing removed.</p>{% endif %}{% if request.args.get('error') %}<p style="color:#fca5a5">Invalid role or price. Enter a positive whole number.</p>{% endif %}<section class="card"><h2>Select server</h2>{% if bot_guilds %}<form method="get"><select class="field" name="guild" onchange="this.form.submit()">{% for g in bot_guilds %}<option value="{{ g.id }}" {% if g.id|string==guild_id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></form><h2>Add or update role</h2><form method="post" action="/shop-panel/save"><input type="hidden" name="guild_id" value="{{ guild_id }}"><select class="field" name="role_id" required><option value="">Choose a role</option>{% for role in roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select><input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" required><button class="btn">Save listing</button></form>{% else %}<p>Bot is not connected to any servers.</p>{% endif %}</section><section class="card"><h2>Configured roles</h2>{% for item in listings %}<div class="row"><div><strong>🎭 {{ item.role_name }}</strong><div style="color:#aaaabd">Role ID {{ item.role_id }} · 🍬 {{ "{:,}".format(item.price) }}</div></div><form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="role_id" value="{{ item.role_id }}"><button class="btn" type="submit">Remove</button></form></div>{% else %}<p style="color:#aaaabd">No role listings configured for this server.</p>{% endfor %}</section></main></body></html>
