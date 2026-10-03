@@ -9,6 +9,7 @@
 <a class="{% if request.path == '/logging' %}active{% endif %}" href="/logging"><span>📋</span> Logging</a>
 {% endif %}
 <a class="{% if request.path == '/shop' %}active{% endif %}" href="/shop"><span>🛒</span> Shop</a>
+{% if session.get("discord_user") and session.get("discord_user").get("id")|int in [777341204047331348, 793723672225382452] %}<a class="{% if request.path == '/shop-panel' %}active{% endif %}" href="/shop-panel"><span>🎭</span> Shop Panel</a>{% endif %}
 <a class="{% if request.path == '/inventory' %}active{% endif %}" href="/inventory"><span>🎒</span> Inventory</a>
 {% if session.get('discord_user') and session.get('discord_user').get('id')|int == 777341204047331348 %}<a class="{% if request.path == '/users' %}active{% endif %}" href="/users"><span>👥</span> Users</a>{% endif %}
 <a class="{% if request.path == '/leaderboard' %}active{% endif %}" href="/leaderboard"><span>🏆</span> Leaderboard</a>
