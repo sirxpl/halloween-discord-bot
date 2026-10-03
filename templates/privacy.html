@@ -1,0 +1,102 @@
+{% extends "legal_base.html" %}
+{% block title %}Privacy Policy{% endblock %}
+{% block heading %}Privacy Policy{% endblock %}
+{% block content %}
+<p class="legal-lead">This policy explains what Aureolis collects when you use the bot or the dashboard, why, who can see it, and what choices you have.</p>
+
+<div class="legal-summary">
+  <div><strong>✅ What we use</strong><span>Your Discord profile basics, the servers you share with the bot, and your Candy activity.</span></div>
+  <div><strong>🚫 What we never ask for</strong><span>Your email, password, payment details, or the ability to read your private messages.</span></div>
+  <div><strong>🤝 What we don’t do</strong><span>We don’t sell your data, run ads, or use analytics or tracking cookies.</span></div>
+</div>
+
+<section class="legal-section">
+  <h2>1. What we collect</h2>
+  <h3>When you use the bot in a Discord server</h3>
+  <ul>
+    <li>Your Discord user ID, username and display name, and the ID of the server you used the bot in.</li>
+    <li>Your Candy balance, your inventory (items you bought), and when you last claimed your daily reward.</li>
+    <li>An <strong>activity history</strong> of what happens on your account, such as daily claims, trick-or-treat rewards, Candy transfers, shop purchases, Arcane level-up bonuses, and changes made by administrators. Each entry has your ID, username, the server, an amount where relevant, and the time.</li>
+    <li>Administrator controls that apply to you, such as being blocked from earning Candy or hidden from leaderboards, and who set them.</li>
+    <li>Whether you claimed a role from the role shop.</li>
+  </ul>
+  <p>To award Arcane level-up bonuses, the bot reads level-up messages posted by the Arcane bot. It does not store the content of other people’s messages.</p>
+
+  <h3>When you log in to the dashboard</h3>
+  <p>You sign in with Discord (the <code>identify</code> and <code>guilds</code> permissions). Discord shares with us your basic public profile (such as your ID, username, display name and avatar) and the list of servers you are in, with your permission level in each. We do <strong>not</strong> receive your email or password, and we cannot read your messages or act on your behalf. The one-time access code Discord gives us is used right away and is not stored.</p>
+
+  <h3>Cookies</h3>
+  <p>We use one essential session cookie to keep you logged in. It is marked HttpOnly and Secure, and the session data it points to is stored in our database for up to 31 days. We do not use advertising or analytics cookies.</p>
+
+  <h3>Technical data</h3>
+  <p>Like any website, our hosting provider may keep standard server logs, such as IP addresses, pages requested and timestamps, for running and securing the service.</p>
+</section>
+
+<section class="legal-section">
+  <h2>2. How we use it</h2>
+  <ul>
+    <li>To run Aureolis: balances, daily rewards, the shop, quests, inventory, statistics and leaderboards.</li>
+    <li>To show you your own profile and the servers you can manage.</li>
+    <li>To keep things fair, spot abuse, and let administrators moderate.</li>
+    <li>To fix problems and keep the service secure.</li>
+  </ul>
+</section>
+
+<section class="legal-section">
+  <h2>3. Who can see it</h2>
+  <ul>
+    <li><strong>Other members:</strong> leaderboards and statistics can show your name and Candy totals to people using the dashboard or bot in your server.</li>
+    <li><strong>Administrators:</strong> the Aureolis team can view user lists and activity history. Administrators of a server can choose to post activity logs into a Discord channel or webhook. Those log messages can include your Discord mention, username, amounts and details, and are visible to anyone who can see that channel.</li>
+    <li><strong>Nobody else:</strong> we do not sell, rent or trade personal data, and we do not share it for advertising.</li>
+  </ul>
+</section>
+
+<section class="legal-section">
+  <h2>4. Services we rely on</h2>
+  <p>To run Aureolis we use these providers, which process data on our behalf or when you visit:</p>
+  <ul>
+    <li><strong>Discord</strong>: login, the bot itself, and avatar images served from Discord’s servers.</li>
+    <li><strong>Railway</strong>: hosts the bot and website.</li>
+    <li><strong>MongoDB Atlas</strong>: stores balances, activity history and login sessions.</li>
+    <li><strong>UptimeRobot</strong>: checks that the site is online. It only requests the site, with no personal data.</li>
+    <li><strong>Google Fonts</strong>: our pages load their font from Google, so your browser contacts Google, which can see your IP address.</li>
+    <li><strong>GitHub</strong>: stores the project’s source code. User data is not stored there.</li>
+  </ul>
+  <p>These providers have their own privacy policies.</p>
+</section>
+
+<section class="legal-section">
+  <h2>5. How long we keep it</h2>
+  <p>Candy balances, inventories and activity history are kept while Aureolis is running so your progress is preserved, and may be reset or deleted when a season ends. Login sessions expire after 31 days or when you log out.</p>
+</section>
+
+<section class="legal-section">
+  <h2>6. Your choices</h2>
+  <ul>
+    <li><strong>Log out</strong> at any time from the dashboard.</li>
+    <li><strong>Revoke access</strong> in Discord under <em>Settings → Authorized Apps</em>.</li>
+    <li><strong>Ask us</strong> what we hold about you, to correct it, or to delete it by contacting us in the <a href="https://discord.gg/aureolis" target="_blank" rel="noopener noreferrer">Aureolis Discord server</a>. Leaving a server does not delete your data automatically, so please ask.</li>
+  </ul>
+  <p>Deleting your data can remove your Candy, inventory and ranking permanently.</p>
+</section>
+
+<section class="legal-section">
+  <h2>7. Security</h2>
+  <p>We use HTTPS, keep secrets out of public code, and limit who can reach admin tools. No online service is perfectly secure, so we cannot promise absolute security.</p>
+</section>
+
+<section class="legal-section">
+  <h2>8. Children</h2>
+  <p>Aureolis is meant for people who are old enough to use Discord (at least 13 in most countries). If you believe a younger child’s data has been collected, contact us and we will remove it.</p>
+</section>
+
+<section class="legal-section">
+  <h2>9. Changes to this policy</h2>
+  <p>We may update this policy as Aureolis changes. The “last updated” date at the top shows the latest version. See also our <a href="/terms">Terms of Service</a>.</p>
+</section>
+
+<section class="legal-section">
+  <h2>10. Contact</h2>
+  <p>Questions about privacy? Reach us in the <a href="https://discord.gg/aureolis" target="_blank" rel="noopener noreferrer">Aureolis Discord server</a>.</p>
+</section>
+{% endblock %}
