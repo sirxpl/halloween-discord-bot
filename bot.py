@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 
 import aiohttp
 import discord
+from jinja2 import ChoiceLoader, FunctionLoader
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
@@ -87,6 +88,20 @@ def require_web_login_screen():
     if not session.get("discord_user"):
         return redirect(url_for("dashboard"))
     return None
+
+
+def _template_alias_loader(name):
+    """Downloads/uploads sometimes drop the leading underscore, so templates/_sidebar.html
+    ends up named templates/sidebar.html. Accept either name instead of crashing every page."""
+    if name == "_sidebar.html":
+        path = os.path.join(app.root_path, "templates", "sidebar.html")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                return handle.read(), path, lambda: True
+    return None
+
+
+app.jinja_loader = ChoiceLoader([app.jinja_loader, FunctionLoader(_template_alias_loader)])
 
 
 @app.context_processor
