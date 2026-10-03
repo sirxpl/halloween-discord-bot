@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import logging
 import random
@@ -6,6 +7,7 @@ import threading
 import asyncio
 from datetime import datetime, timezone, timedelta
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -14,7 +16,7 @@ from flask_session import Session
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 import secrets
 import requests
 import re
@@ -414,92 +416,461 @@ def calculate_daily_reward(base_reward, role_ids, guild_id):
     return max(1, int(round(int(base_reward) * multiplier))), boost
 
 
-LOG_CATEGORIES = ("economy", "member_activity", "shop", "admin", "errors", "system")
+# =====================================================================
+#  LOGGING SYSTEM
+#  Events are queued, rendered once as a Components V2 "spec", then
+#  delivered to a channel (discord.ui.LayoutView) or a webhook (raw JSON
+#  with the IS_COMPONENTS_V2 flag). Delivery results are saved so the
+#  dashboard can show exactly why something failed.
+# =====================================================================
+COMPONENTS_V2_FLAG = 1 << 15
+
+LOG_CATEGORY_META = {
+    "economy":         {"emoji": "🍬", "label": "Economy",         "color": 0xF97316, "desc": "Daily rewards, trick-or-treat, Candy transfers"},
+    "rewards":         {"emoji": "⭐", "label": "Rewards",         "color": 0xFACC15, "desc": "Arcane level-up bonuses"},
+    "shop":            {"emoji": "🛒", "label": "Shop",            "color": 0x7C3AED, "desc": "Item purchases"},
+    "member_activity": {"emoji": "👤", "label": "Member activity", "color": 0x3B82F6, "desc": "Member blocks and leaderboard controls"},
+    "admin":           {"emoji": "🛡️", "label": "Admin",           "color": 0xEC4899, "desc": "Manual Candy changes, boosts, settings"},
+    "errors":          {"emoji": "⚠️", "label": "Errors",          "color": 0xEF4444, "desc": "Failures worth a look"},
+    "system":          {"emoji": "⚙️", "label": "System",          "color": 0x6B7280, "desc": "Everything else, including test logs"},
+}
+LOG_CATEGORIES = tuple(LOG_CATEGORY_META)
+
+# action -> (category, emoji, title, amount sign: +1 / -1 / 0)
+LOG_EVENTS = {
+    "daily":               ("economy", "🎁", "Daily Reward", +1),
+    "trick_or_treat":      ("economy", "🎃", "Trick or Treat", +1),
+    "give":                ("economy", "🤝", "Candy Transfer", 0),
+    "buy":                 ("shop", "🛒", "Shop Purchase", 0),
+    "web_buy":             ("shop", "🛒", "Shop Purchase (Web)", 0),
+    "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
+    "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
+    "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
+    "admin_subtract":      ("admin", "➖", "Candy Removed by Admin", -1),
+    "daily_boost":         ("admin", "⚡", "Daily Boost Set", 0),
+    "daily_boost_removed": ("admin", "⚡", "Daily Boost Removed", 0),
+    "economy_settings":    ("admin", "⚙️", "Economy Settings Changed", 0),
+    "logging_test":        ("system", "🧪", "Logging Test", 0),
+}
+
+DETAIL_LABELS = {
+    "changed_by": "Changed by", "recipient_id": "Recipient", "boost_role": "Boost role",
+    "role_id": "Role", "role_name": "Role name", "control": "Control", "level": "Level",
+    "trick_or_treat_min": "Trick-or-treat min", "trick_or_treat_max": "Trick-or-treat max",
+    "daily_reward": "Daily reward",
+}
+DETAIL_HIDDEN = {"source_bot_id", "test", "recipient"}
+SOURCE_LABELS = {"web_users": "Web dashboard (Users)", "web_daily": "Web dashboard (Daily)"}
 
 
-def get_logging_config(guild_id):
-    record = logging_config.find_one({"_id": str(guild_id)}) or {}
-    return {"enabled": bool(record.get("enabled", True)), "mode": record.get("mode", "simple"),
-            "main": record.get("main", {"type": "channel", "channel_id": ""}),
-            "advanced": record.get("advanced", {}), "updated_at": record.get("updated_at")}
-
-
-def save_logging_config(guild_id, mode, main, advanced):
-    logging_config.update_one({"_id": str(guild_id)},
-        {"$set": {"guild_id": int(guild_id), "mode": mode, "main": main, "advanced": advanced, "updated_at": now_utc()}},
-        upsert=True)
+def event_info(action):
+    """Metadata for an action; unknown actions fall back to a sensible category."""
+    action = action or ""
+    if action in LOG_EVENTS:
+        category, emoji, title, sign = LOG_EVENTS[action]
+    else:
+        category = "errors" if action.startswith("error") else "system"
+        emoji = "⚠️" if category == "errors" else "📌"
+        title, sign = action.replace("_", " ").title() or "Event", 0
+    meta = LOG_CATEGORY_META[category]
+    return {"category": category, "emoji": emoji, "title": title, "sign": sign,
+            "color": meta["color"], "category_label": meta["label"]}
 
 
 def log_category(action):
-    if action in {"daily", "trick_or_treat", "give", "web_buy"}: return "economy"
-    if action == "buy": return "shop"
-    if action in {"admin_add", "admin_subtract"}: return "admin"
-    if action == "member_control": return "member_activity"
-    if action.startswith("error"): return "errors"
-    return "system"
+    return event_info(action)["category"]
 
 
-async def _send_discord_log(guild_id, action, username, amount, details):
-    cfg = await asyncio.to_thread(get_logging_config, guild_id)
-    if not cfg.get("enabled", True):
-        return
-    category = log_category(action)
-    destination = cfg["advanced"].get(category) if cfg["mode"] == "advanced" else None
-    if not destination: destination = cfg["main"]
-    if not destination or not destination.get("type"): return
-    message = f"**{action.replace('_', ' ').title()}**"
-    if username: message += f" • {username}"
-    if amount is not None: message += f" • {amount:,} 🍬"
-    if details: message += f"\nDetails: {str(details)[:900]}"
+def actions_in_category(category):
+    return [a for a, v in LOG_EVENTS.items() if v[0] == category]
+
+
+# ---------- webhook helpers ----------
+WEBHOOK_RE = re.compile(
+    r"^https://(?:(?:canary|ptb)\.)?(?:discord|discordapp)\.com/api(?:/v\d+)?/webhooks/(\d{15,25})/([A-Za-z0-9_\-]{30,})/?(?:\?.*)?$"
+)
+
+
+def normalize_webhook_url(url):
+    """Return a clean https://discord.com/api/webhooks/ID/TOKEN[?thread_id=N] URL, or None.
+    Only real Discord webhook hosts are accepted, so the server can never be pointed at arbitrary URLs."""
+    url = (url or "").strip()
+    match = WEBHOOK_RE.match(url)
+    if not match:
+        return None
+    wid, token = match.groups()
+    clean = f"https://discord.com/api/webhooks/{wid}/{token}"
+    thread = parse_qs(urlparse(url).query).get("thread_id", [None])[0]
+    if thread and thread.isdigit():
+        clean += f"?thread_id={thread}"
+    return clean
+
+
+def mask_webhook(url):
+    match = WEBHOOK_RE.match(url or "")
+    if not match:
+        return "invalid webhook"
+    return f"…/webhooks/{match.group(1)}/••••{match.group(2)[-4:]}"
+
+
+def verify_webhook(url):
+    """Ask Discord whether the webhook really exists. Returns its name or raises ValueError(message)."""
+    base = url.split("?")[0]
     try:
-        if destination["type"] == "webhook":
-            webhook_url = (destination.get("url") or "").strip()
-            if not webhook_url:
-                raise ValueError("Webhook URL is empty.")
-            response = requests.post(
-                webhook_url + ("&" if "?" in webhook_url else "?") + "wait=true",
-                json={
-                    "username": "Aureolis Logs",
-                    "content": message,
-                    "allowed_mentions": {"parse": []},
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=8,
-            )
-            if not response.ok:
-                log.error(
-                    "Discord webhook delivery failed: HTTP %s: %s",
-                    response.status_code,
-                    response.text[:500],
-                )
-        elif destination["type"] == "channel":
-            bot = BOT.get("instance")
-            channel = bot.get_channel(int(destination.get("channel_id", 0))) if bot else None
-            if channel:
-                await channel.send(message, allowed_mentions=discord.AllowedMentions.none())
-            else:
-                log.warning("Log channel %s not found for guild %s (wrong ID, or bot cannot see it).", destination.get("channel_id"), guild_id)
-    except Exception:
-        log.exception("Could not deliver activity log to Discord.")
+        response = requests.get(base, timeout=6)
+    except requests.RequestException:
+        raise ValueError("Could not reach Discord to verify that webhook. Try again in a moment.")
+    if response.status_code == 200:
+        return response.json().get("name") or "Webhook"
+    if response.status_code in (401, 404):
+        raise ValueError("Discord says that webhook does not exist (it may have been deleted or the URL is incomplete).")
+    raise ValueError(f"Discord rejected that webhook (HTTP {response.status_code}).")
 
 
-def queue_discord_log(guild_id, action, username, amount, details):
-    if not guild_id: return
+def describe_webhook_error(status, body):
+    message = ""
+    try:
+        data = json.loads(body)
+        message = data.get("message", "")
+        if data.get("errors"):
+            message += " " + json.dumps(data["errors"])[:200]
+    except (ValueError, TypeError):
+        message = (body or "")[:120]
+    hints = {
+        401: "Webhook token is invalid.",
+        403: "Webhook is not allowed to post there.",
+        404: "Webhook was deleted or the URL is wrong.",
+    }
+    hint = hints.get(status, "")
+    return f"HTTP {status}: {hint} {message}".strip()
+
+
+# ---------- config ----------
+_CFG_CACHE = {}
+_CFG_TTL = 10
+
+
+def get_logging_config(guild_id, fresh=False):
+    key = str(guild_id)
+    cached = _CFG_CACHE.get(key)
+    if cached and not fresh and time.monotonic() - cached[0] < _CFG_TTL:
+        return cached[1]
+    record = logging_config.find_one({"_id": key}) or {}
+    cfg = {
+        "enabled": bool(record.get("enabled", True)),
+        "mode": record.get("mode", "simple"),
+        "main": record.get("main") or {"type": "channel", "channel_id": ""},
+        "advanced": record.get("advanced") or {},
+        "delivery": record.get("delivery") or {},
+        "updated_at": record.get("updated_at"),
+    }
+    _CFG_CACHE[key] = (time.monotonic(), cfg)
+    return cfg
+
+
+def invalidate_logging_cache(guild_id):
+    _CFG_CACHE.pop(str(guild_id), None)
+
+
+def resolve_destination(cfg, category):
+    """Returns (key, destination) or (None, None) when this category should not be delivered."""
+    if cfg["mode"] == "advanced":
+        override = cfg["advanced"].get(category)
+        if override:
+            if override.get("type") == "off":
+                return None, None
+            if override.get("type") in {"channel", "webhook"}:
+                return category, override
+    main = cfg["main"]
+    if main.get("type") == "channel" and main.get("channel_id"):
+        return "main", main
+    if main.get("type") == "webhook" and main.get("url"):
+        return "main", main
+    return None, None
+
+
+def all_destinations(cfg):
+    """Every distinct destination currently configured (used by the test button)."""
+    found = []
+    main_key, main_dest = resolve_destination({**cfg, "mode": "simple"}, "system")
+    if main_dest:
+        found.append((main_key, main_dest))
+    if cfg["mode"] == "advanced":
+        for category in LOG_CATEGORIES:
+            override = cfg["advanced"].get(category)
+            if override and override.get("type") in {"channel", "webhook"}:
+                found.append((category, override))
+    return found
+
+
+def record_delivery(guild_id, key, ok, message):
+    try:
+        logging_config.update_one(
+            {"_id": str(guild_id)},
+            {"$set": {f"delivery.{key}": {"ok": bool(ok), "message": str(message)[:300], "at": now_utc()}}},
+            upsert=True,
+        )
+        invalidate_logging_cache(guild_id)
+    except PyMongoError:
+        log.exception("Could not store log delivery status.")
+
+
+# ---------- rendering (Components V2) ----------
+def format_details(details):
+    if not details:
+        return []
+    if not isinstance(details, dict):
+        return [("Details", str(details)[:300])]
+    rows = []
+    for key, value in details.items():
+        if value is None or key in DETAIL_HIDDEN:
+            continue
+        label = DETAIL_LABELS.get(key, key.replace("_", " ").title())
+        text = str(value)
+        if key in {"changed_by", "recipient_id"} and text.isdigit():
+            text = f"<@{text}>"
+        elif key == "role_id" and text.isdigit():
+            text = f"<@&{text}>"
+        elif key == "enabled":
+            text = "Enabled" if value else "Disabled"
+        elif key == "source":
+            text = SOURCE_LABELS.get(text, text)
+        elif key == "multiplier":
+            text = f"×{value}"
+        elif key == "control":
+            text = text.replace("_", " ")
+        rows.append((label, text[:200]))
+    return rows
+
+
+def activity_summary(item):
+    """Plain-text one-liner for the dashboard's activity list."""
+    parts = [f"{label}: {value}" for label, value in format_details(item.get("details"))]
+    return " · ".join(parts)
+
+
+def build_log_spec(event, thumbnail_url=None):
+    info = event_info(event["action"])
+    primary = []
+    user_id, username = event.get("user_id"), event.get("username")
+    if user_id:
+        who = f"<@{user_id}>"
+        if username and not str(username).startswith("<@"):
+            who += f" (`{username}`)"
+        primary.append(("Member", who))
+    elif username and not str(username).startswith("<@"):
+        primary.append(("Member", f"`{username}`"))
+    amount = event.get("amount")
+    if amount is not None:
+        sign = {1: "+", -1: "−"}.get(info["sign"], "")
+        primary.append(("Amount", f"**{sign}{int(amount):,}** 🍬"))
+    if event["action"] == "logging_test":
+        secondary = [("Status", "Delivery is working ✅")]
+    else:
+        secondary = format_details(event.get("details"))
+    created = event.get("created") or now_utc()
+    return {
+        "emoji": info["emoji"], "title": info["title"], "color": info["color"],
+        "category_label": info["category_label"], "primary": primary, "secondary": secondary,
+        "thumbnail": thumbnail_url, "timestamp": int(created.timestamp()),
+    }
+
+
+def _lines(rows):
+    return "\n".join(f"**{k}:** {v}" for k, v in rows)
+
+
+def spec_to_components(spec):
+    """Raw Components V2 JSON (used for webhooks)."""
+    head = f"## {spec['emoji']} {spec['title']}"
+    if spec["primary"]:
+        head += "\n" + _lines(spec["primary"])
+    text = lambda content: {"type": 10, "content": content[:3900]}
+    separator = {"type": 14, "divider": True, "spacing": 1}
+    children = []
+    if spec["thumbnail"]:
+        children.append({"type": 9, "components": [text(head)],
+                         "accessory": {"type": 11, "media": {"url": spec["thumbnail"]}}})
+    else:
+        children.append(text(head))
+    if spec["secondary"]:
+        children += [separator, text(_lines(spec["secondary"]))]
+    children += [separator, text(f"-# {spec['category_label']} • <t:{spec['timestamp']}:f> • Aureolis Logs")]
+    return [{"type": 17, "accent_color": spec["color"], "components": children}]
+
+
+def spec_to_view(spec):
+    """The same layout as a discord.py LayoutView (used for channels)."""
+    head = f"## {spec['emoji']} {spec['title']}"
+    if spec["primary"]:
+        head += "\n" + _lines(spec["primary"])
+    ui = discord.ui
+    items = []
+    if spec["thumbnail"]:
+        items.append(ui.Section(ui.TextDisplay(head[:3900]), accessory=ui.Thumbnail(spec["thumbnail"])))
+    else:
+        items.append(ui.TextDisplay(head[:3900]))
+    if spec["secondary"]:
+        items += [ui.Separator(), ui.TextDisplay(_lines(spec["secondary"])[:3900])]
+    items += [ui.Separator(), ui.TextDisplay(f"-# {spec['category_label']} • <t:{spec['timestamp']}:f> • Aureolis Logs")]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=spec["color"]))
+    return view
+
+
+# ---------- delivery ----------
+async def send_via_webhook(url, spec):
+    base, _, query = url.partition("?")
+    params = {"wait": "true", "with_components": "true"}
+    thread = parse_qs(query).get("thread_id", [None])[0]
+    if thread:
+        params["thread_id"] = thread
+    payload = {
+        "username": "Aureolis Logs",
+        "flags": COMPONENTS_V2_FLAG,
+        "components": spec_to_components(spec),
+        "allowed_mentions": {"parse": []},
+    }
+    timeout = aiohttp.ClientTimeout(total=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session_:
+            for attempt in range(2):
+                async with session_.post(base, params=params, json=payload) as response:
+                    body = await response.text()
+                    if response.status in (200, 204):
+                        return True, "Delivered via webhook"
+                    if response.status == 429 and attempt == 0:
+                        try:
+                            wait = float(json.loads(body).get("retry_after", 1))
+                        except (ValueError, TypeError):
+                            wait = 1.0
+                        await asyncio.sleep(min(wait, 5))
+                        continue
+                    return False, describe_webhook_error(response.status, body)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return False, f"Network error: {exc.__class__.__name__}"
+    return False, "Webhook is rate limited, try again shortly."
+
+
+async def send_via_channel(guild_id, channel_id, spec):
     bot = BOT.get("instance")
-    if not bot or bot.is_closed(): return
+    if bot is None or bot.is_closed() or not bot.is_ready():
+        return False, "Bot is not connected to Discord right now."
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(channel_id))
+        except discord.HTTPException:
+            return False, "Channel not found. It may have been deleted or the bot cannot see it."
+    guild = getattr(channel, "guild", None)
+    if guild is not None and not channel.permissions_for(guild.me).send_messages:
+        return False, f"Missing Send Messages permission in #{channel.name}."
     try:
-        asyncio.run_coroutine_threadsafe(_send_discord_log(guild_id, action, username, amount, details), bot.loop)
-    except Exception:
+        await channel.send(view=spec_to_view(spec), allowed_mentions=discord.AllowedMentions.none())
+        return True, "Delivered to channel"
+    except discord.Forbidden:
+        return False, f"Discord refused the message in #{getattr(channel, 'name', channel_id)} (permissions)."
+    except discord.HTTPException as exc:
+        return False, f"Discord error {exc.status}: {str(exc.text)[:150]}"
+
+
+def resolve_avatar(guild_id, user_id):
+    bot = BOT.get("instance")
+    if not user_id or bot is None or bot.is_closed():
+        return None
+    guild = bot.get_guild(int(guild_id))
+    member = guild.get_member(int(user_id)) if guild else None
+    return member.display_avatar.url if member else None
+
+
+async def send_to_destination(dest, event, thumbnail=True):
+    avatar = resolve_avatar(event["guild_id"], event.get("user_id")) if thumbnail else None
+    spec = build_log_spec(event, avatar)
+    if dest["type"] == "webhook":
+        return await send_via_webhook(dest.get("url", ""), spec)
+    return await send_via_channel(event["guild_id"], dest.get("channel_id", 0), spec)
+
+
+async def deliver_log(event):
+    cfg = await asyncio.to_thread(get_logging_config, event["guild_id"])
+    if not cfg["enabled"]:
+        return
+    key, dest = resolve_destination(cfg, log_category(event["action"]))
+    if not dest:
+        return
+    ok, message = await send_to_destination(dest, event)
+    await asyncio.to_thread(record_delivery, event["guild_id"], key, ok, message)
+    if not ok:
+        log.warning("Log delivery to %s failed for guild %s: %s", key, event["guild_id"], message)
+
+
+async def send_test_logs(guild_id, user):
+    """Sends a test log to every configured destination and reports each result."""
+    cfg = await asyncio.to_thread(get_logging_config, guild_id, True)
+    destinations = all_destinations(cfg)
+    if not destinations:
+        return [("—", False, "No destination is configured yet. Save your settings first.")]
+    results = []
+    for key, dest in destinations:
+        event = {"guild_id": int(guild_id), "action": "logging_test", "user_id": user.get("id"),
+                 "username": user.get("username"), "amount": None, "details": {"test": True}, "created": now_utc()}
+        ok, message = await send_to_destination(dest, event)
+        await asyncio.to_thread(record_delivery, guild_id, key, ok, message)
+        results.append((key, ok, message))
+    return results
+
+
+LOG_QUEUE = None
+LOG_LOOP = None
+_LOG_WORKER_TASK = None
+
+
+async def log_worker():
+    while True:
+        event = await LOG_QUEUE.get()
+        try:
+            await deliver_log(event)
+        except Exception:
+            log.exception("Unexpected error while delivering a log.")
+        finally:
+            LOG_QUEUE.task_done()
+        await asyncio.sleep(0.4)  # gentle pacing keeps webhooks/channels under rate limits
+
+
+def start_log_worker():
+    global LOG_QUEUE, LOG_LOOP, _LOG_WORKER_TASK
+    LOG_LOOP = asyncio.get_running_loop()
+    LOG_QUEUE = asyncio.Queue(maxsize=500)
+    _LOG_WORKER_TASK = asyncio.create_task(log_worker())
+
+
+def queue_discord_log(guild_id, action, user_id, username, amount, details):
+    if not guild_id or LOG_QUEUE is None or LOG_LOOP is None:
+        return
+    event = {"guild_id": int(guild_id), "action": action, "user_id": user_id, "username": username,
+             "amount": amount, "details": details, "created": now_utc()}
+
+    def put():
+        try:
+            LOG_QUEUE.put_nowait(event)
+        except asyncio.QueueFull:
+            log.warning("Log queue is full; dropped a %s event.", action)
+
+    try:
+        LOG_LOOP.call_soon_threadsafe(put)
+    except RuntimeError:
         log.exception("Could not queue Discord activity log.")
 
 
 def log_activity(action, user_id=None, username=None, guild_id=None, amount=None, details=None):
     activity_logs.insert_one({
-        "action": action, "user_id": int(user_id) if user_id is not None else None,
+        "action": action, "category": log_category(action),
+        "user_id": int(user_id) if user_id is not None else None,
         "username": username, "guild_id": int(guild_id) if guild_id is not None else None,
         "amount": amount, "details": details, "created_at": now_utc(),
     })
-    queue_discord_log(guild_id, action, username, amount, details)
+    queue_discord_log(guild_id, action, int(user_id) if user_id is not None else None, username, amount, details)
+
 
 
 def set_command_enabled(command_name, enabled):
@@ -546,6 +917,43 @@ def economy_settings():
     return redirect(url_for("economy_page", saved="1"))
 
 
+def _logging_flash(kind, text):
+    session["log_flash"] = {"kind": kind, "text": text}
+
+
+class LogConfigError(ValueError):
+    pass
+
+
+def parse_destination(form, prefix, guild, previous, allow_inherit):
+    default = "inherit" if allow_inherit else "channel"
+    typ = form.get(f"{prefix}_type", default)
+    if allow_inherit and typ == "inherit":
+        return None
+    if allow_inherit and typ == "off":
+        return {"type": "off"}
+    if typ == "channel":
+        cid = form.get(f"{prefix}_channel_id", "").strip()
+        channel = guild.get_channel(int(cid)) if cid.isdigit() else None
+        if channel is None or not hasattr(channel, "send") or isinstance(channel, discord.abc.PrivateChannel):
+            raise LogConfigError("Pick a text channel the bot can see.")
+        if not channel.permissions_for(guild.me).send_messages:
+            raise LogConfigError(f"The bot cannot send messages in #{channel.name}. Give it Send Messages there first.")
+        return {"type": "channel", "channel_id": cid}
+    if typ == "webhook":
+        raw = form.get(f"{prefix}_webhook_url", "").strip()
+        if raw:
+            url = normalize_webhook_url(raw)
+            if not url:
+                raise LogConfigError("That is not a valid Discord webhook URL. It should look like https://discord.com/api/webhooks/ID/TOKEN.")
+            name = verify_webhook(url)
+            return {"type": "webhook", "url": url, "name": name}
+        if previous and previous.get("type") == "webhook" and previous.get("url"):
+            return previous
+        raise LogConfigError("Paste a webhook URL for the webhook destination.")
+    raise LogConfigError("Unknown destination type.")
+
+
 @app.get("/logging")
 def logging_page():
     user = session.get("discord_user")
@@ -560,15 +968,40 @@ def logging_page():
     guild_id = request.args.get("guild") or (guilds[0]["id"] if guilds else "")
     if guild_id and not any(str(g["id"]) == str(guild_id) for g in guilds):
         guild_id = guilds[0]["id"] if guilds else ""
-    logs = list(activity_logs.find({"guild_id": int(guild_id)}).sort("created_at", -1).limit(100)) if guild_id else []
-    config = get_logging_config(guild_id) if guild_id else {"enabled": True, "mode": "simple", "main": {"type": "channel", "channel_id": ""}, "advanced": {}}
+
+    category = request.args.get("cat", "")
+    query = {"guild_id": int(guild_id)} if guild_id else None
+    logs = []
+    if query is not None:
+        if category in LOG_CATEGORIES:
+            query["action"] = {"$in": actions_in_category(category) or ["__none__"]}
+            if category == "system":
+                query["action"] = {"$nin": [a for a, v in LOG_EVENTS.items() if v[0] != "system"]}
+            if category == "errors":
+                query["action"] = {"$regex": "^error"}
+        logs = list(activity_logs.find(query).sort("created_at", -1).limit(100))
+
+    config = get_logging_config(guild_id, fresh=True) if guild_id else {
+        "enabled": True, "mode": "simple", "main": {"type": "channel", "channel_id": ""}, "advanced": {}, "delivery": {}}
     channels = []
     if bot and not bot.is_closed() and guild_id:
         guild = bot.get_guild(int(guild_id))
         if guild:
             channels = [{"id": str(c.id), "name": c.name} for c in guild.text_channels]
-    return render_template("logging.html", logs=logs, logging_config=config, logging_guilds=guilds,
-                           logging_guild_id=str(guild_id), logging_channels=channels, log_categories=LOG_CATEGORIES)
+
+    # Webhook URLs are secrets: never send them to the browser, only a masked label.
+    masked = {}
+    for key, dest in [("main", config["main"])] + list(config["advanced"].items()):
+        if dest and dest.get("type") == "webhook":
+            masked[key] = f"{dest.get('name') or 'Webhook'} · {mask_webhook(dest.get('url', ''))}"
+
+    flash = session.pop("log_flash", None)
+    return render_template(
+        "logging.html", logs=logs, logging_config=config, logging_guilds=guilds,
+        logging_guild_id=str(guild_id), logging_channels=channels, log_categories=LOG_CATEGORIES,
+        category_meta=LOG_CATEGORY_META, active_category=category, masked_webhooks=masked,
+        flash=flash, event_info=event_info, activity_summary=activity_summary,
+    )
 
 
 @app.post("/logging/settings")
@@ -576,46 +1009,39 @@ def logging_settings():
     user = session.get("discord_user")
     if not user or not is_admin(user["id"]):
         return "Forbidden", 403
+    guild_id_raw = request.form.get("guild_id", "")
     try:
-        guild_id = int(request.form.get("guild_id", ""))
+        guild_id = int(guild_id_raw)
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         if guild is None:
-            raise ValueError
-        enabled = request.form.get("enabled") == "on"
+            raise LogConfigError("The bot is not in that server right now.")
         mode = request.form.get("mode", "simple")
-        if mode not in {"simple", "advanced"}: raise ValueError
-        previous = get_logging_config(guild_id)
-        typ = request.form.get("destination_type", "channel")
-        if typ == "webhook":
-            url = request.form.get("webhook_url", "").strip() or previous.get("main", {}).get("url", "")
-            if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
-            main = {"type": "webhook", "url": url}
-        else:
-            cid = request.form.get("channel_id", "").strip()
-            if not cid.isdigit(): raise ValueError
-            channel = guild.get_channel(int(cid))
-            if channel is None or not isinstance(channel, discord.TextChannel): raise ValueError
-            main = {"type": "channel", "channel_id": cid}
+        if mode not in {"simple", "advanced"}:
+            raise LogConfigError("Unknown logging mode.")
+        previous = get_logging_config(guild_id, fresh=True)
+        main = parse_destination(request.form, "main", guild, previous.get("main"), allow_inherit=False)
         advanced = {}
         for category in LOG_CATEGORIES:
-            ctype = request.form.get(f"{category}_type", "inherit")
-            if ctype == "channel":
-                cid = request.form.get(f"{category}_channel_id", "").strip()
-                if not cid.isdigit(): raise ValueError
-                advanced[category] = {"type": "channel", "channel_id": cid}
-            elif ctype == "webhook":
-                url = request.form.get(f"{category}_webhook_url", "").strip() or previous.get("advanced", {}).get(category, {}).get("url", "")
-                if not (url.startswith("https://discord.com/api/webhooks/") or url.startswith("https://discordapp.com/api/webhooks/")): raise ValueError
-                advanced[category] = {"type": "webhook", "url": url}
+            dest = parse_destination(request.form, category, guild, previous.get("advanced", {}).get(category), allow_inherit=True)
+            if dest:
+                advanced[category] = dest
         logging_config.update_one(
             {"_id": str(guild_id)},
-            {"$set": {"guild_id": guild_id, "enabled": enabled, "mode": mode, "main": main, "advanced": advanced, "updated_at": now_utc()}},
+            {"$set": {"guild_id": guild_id, "enabled": request.form.get("enabled") == "on", "mode": mode,
+                      "main": main, "advanced": advanced, "updated_at": now_utc()}},
             upsert=True,
         )
-        return redirect(url_for("logging_page", guild=guild_id, saved="1"))
-    except (TypeError, ValueError):
-        return redirect(url_for("logging_page", guild=request.form.get("guild_id", ""), error="invalid"))
+        invalidate_logging_cache(guild_id)
+        _logging_flash("ok", "Logging settings saved. Use “Send test log” to confirm delivery.")
+    except LogConfigError as exc:
+        _logging_flash("err", str(exc))
+    except ValueError as exc:
+        _logging_flash("err", str(exc) or "Those values are not valid.")
+    except PyMongoError:
+        log.exception("Could not save logging settings")
+        _logging_flash("err", "The database is unavailable, settings were not saved.")
+    return redirect(url_for("logging_page", guild=guild_id_raw))
 
 
 @app.post("/logging/test")
@@ -626,11 +1052,20 @@ def logging_test():
     guild_id = request.form.get("guild_id", "")
     try:
         bot = BOT.get("instance")
-        if not bot or bot.is_closed(): raise RuntimeError
-        asyncio.run_coroutine_threadsafe(_send_discord_log(int(guild_id), "logging_test", user.get("username"), None, {"test": True}), bot.loop)
-        return redirect(url_for("logging_page", guild=guild_id, tested="1"))
-    except Exception:
-        return redirect(url_for("logging_page", guild=guild_id, error="test"))
+        if not bot or bot.is_closed():
+            raise RuntimeError("The bot is not connected to Discord right now.")
+        future = asyncio.run_coroutine_threadsafe(send_test_logs(int(guild_id), user), bot.loop)
+        results = future.result(timeout=30)
+        labels = {"main": "Main"}
+        summary = " • ".join(
+            f"{'✓' if ok else '✗'} {labels.get(key, LOG_CATEGORY_META.get(key, {}).get('label', key))}: {message}"
+            for key, ok, message in results
+        )
+        _logging_flash("ok" if all(ok for _, ok, _ in results) else "err", summary)
+    except Exception as exc:
+        log.exception("Log test failed")
+        _logging_flash("err", f"Test failed: {exc}" if isinstance(exc, RuntimeError) else "Test failed. Check the Railway logs.")
+    return redirect(url_for("logging_page", guild=guild_id))
 
 
 @app.get("/profile")
@@ -1446,7 +1881,7 @@ class HalloweenBot(commands.Cog):
             log_activity,
             "arcane_level_bonus",
             user_id,
-            f"<@{user_id}>",
+            None,
             guild_id,
             bonus,
             {"level": level, "source_bot_id": message.author.id},
@@ -1784,6 +2219,7 @@ async def park_forever(reason: str):
 
 
 async def main():
+    start_log_worker()
     await check_database()
     d = STATE["discord"]
     retry_delay = 30
