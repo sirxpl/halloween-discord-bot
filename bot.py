@@ -1384,7 +1384,7 @@ class HalloweenBot(commands.Cog):
                     "guild_id": guild_id,
                     "user_id": user_id,
                     "level": level,
-                    "bonus": ARCANE_LEVEL_BONUS,
+                    "bonus": bonus,
                     "created_at": now_utc(),
                 }
             },
