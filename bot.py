@@ -1339,8 +1339,34 @@ class HalloweenBot(commands.Cog):
         if message.guild is None or message.author.id not in ARCANE_BOT_IDS:
             return
 
-        match = ARCANE_LEVEL_PATTERN.fullmatch((message.content or "").strip())
+        # Arcane can send the level-up text either as normal message content
+        # or inside an embed, so inspect both formats.
+        message_texts = []
+        if message.content:
+            message_texts.append(message.content)
+        for embed in message.embeds:
+            if embed.title:
+                message_texts.append(embed.title)
+            if embed.description:
+                message_texts.append(embed.description)
+            for field in embed.fields:
+                if field.name:
+                    message_texts.append(field.name)
+                if field.value:
+                    message_texts.append(field.value)
+
+        match = None
+        for text in message_texts:
+            match = ARCANE_LEVEL_PATTERN.fullmatch(text.strip())
+            if match:
+                break
         if not match:
+            log.info(
+                "Arcane level-up message did not match in guild %s. content=%r embeds=%s",
+                message.guild.id,
+                message.content,
+                len(message.embeds),
+            )
             return
 
         user_id = int(match.group(1))
