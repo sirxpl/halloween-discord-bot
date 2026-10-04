@@ -290,27 +290,6 @@ def inventory_page():
     return render_template("inventory.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, profile=profile)
 
 
-@app.post("/shop/buy/<item_name>")
-def buy_item(item_name):
-    user = session.get("discord_user")
-    if not user:
-        return redirect(url_for("login"))
-    guild = selected_guild()
-    item = next((i for i in SHOP_ITEMS if i["name"] == item_name), None)
-    if not guild or not item:
-        return redirect(url_for("shop_page"))
-    guild_id = int(guild["id"])
-    user_id = int(user["id"])
-    result = users.find_one_and_update(
-        {"guild_id": guild_id, "user_id": user_id, "balance": {"$gte": item["price"]}},
-        {"$inc": {"balance": -item["price"]}, "$push": {"inventory": {"name": item["name"], "price": item["price"], "purchased_at": now_utc()}}},
-        return_document=ReturnDocument.AFTER,
-    )
-    if result is None:
-        return redirect(url_for("shop_page", guild=guild_id, error="not_enough"))
-    return redirect(url_for("inventory_page", guild=guild_id, purchased=item["name"]))
-
-
 @app.get("/events")
 def events_page():
     return render_template("events.html")
