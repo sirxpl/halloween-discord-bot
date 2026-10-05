@@ -2554,6 +2554,14 @@ def now_utc():
     return datetime.now(timezone.utc)
 
 
+def as_utc(value):
+    """MongoDB can hand back naive datetimes (they are UTC). Calling .timestamp() on a naive
+    datetime would use the host's local timezone, so always normalise before building Discord timestamps."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def registered_command_count(default=0):
     bot = BOT.get("instance")
     try:
@@ -2898,6 +2906,52 @@ def trick_or_treat_view(member, reward, new_balance, next_at):
     return view
 
 
+def daily_claimed_view(member, reward, boost, new_balance, next_at):
+    """Components V2 card for a successful /daily."""
+    ui = discord.ui
+    head = (
+        "## 🎁 Daily Reward Claimed\n"
+        f"**Received:** +{int(reward):,} 🍬\n"
+        f"**New balance:** {int(new_balance):,} 🍬"
+    )
+    if boost:
+        head += f"\n⚡ **{float(boost['multiplier']):g}× boost** from **{boost['role_name']}**"
+    ts = int(next_at.timestamp())
+    items = [
+        ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
+        ui.Separator(),
+        ui.TextDisplay(f"⏰ **Next gift:** <t:{ts}:R>\n-# <t:{ts}:F>"),
+    ]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
+def daily_cooldown_view(member, next_at, next_reward, boost=None):
+    """Components V2 card shown when /daily is used before the 24h cooldown is over."""
+    ui = discord.ui
+    ts = int(next_at.timestamp())
+    head = (
+        "## ⏰ Daily Already Claimed\n"
+        "You've already opened today's gift.\n"
+        f"**Next gift:** <t:{ts}:R>\n"
+        f"**Ready at:** <t:{ts}:F>"
+    )
+    reward_text = f"🎁 **Next reward:** +{int(next_reward):,} 🍬"
+    if boost:
+        reward_text += f"\n⚡ **{float(boost['multiplier']):g}× boost** from **{boost['role_name']}**"
+    items = [
+        ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
+        ui.Separator(),
+        ui.TextDisplay(reward_text),
+        ui.Separator(),
+        ui.TextDisplay("-# Daily rewards can be claimed once every 24 hours."),
+    ]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF59E0B))
+    return view
+
+
 def profile_candy_view(member, user, rank, next_daily=None):
     """Components V2 card for /profile."""
     ui = discord.ui
@@ -3154,14 +3208,15 @@ class HalloweenBot(commands.Cog):
 
     @app_commands.command(name="daily", description="Claim your daily Candy reward.")
     async def daily(self, interaction: discord.Interaction):
+        notice = candy_notice_view
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("Server only", "This command can only be used in a server."), ephemeral=True)
             return
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         controls = await db(get_member_controls, guild_id, user_id)
         if controls["blocked_from_candy"]:
-            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server."), ephemeral=True)
             return
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
@@ -3175,25 +3230,24 @@ class HalloweenBot(commands.Cog):
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
-            {"guild_id": guild_id, "user_id": user_id,             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
+            {"guild_id": guild_id, "user_id": user_id,
+             "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
             {"$set": {"last_daily": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
+            # Still on cooldown: show when the next gift unlocks (and what it will be worth).
             user = await db(get_user, guild_id, user_id)
-            timestamp = int((user["last_daily"] + timedelta(hours=24)).timestamp())
+            last = as_utc((user or {}).get("last_daily"))
+            next_at = (last + timedelta(hours=24)) if last else (now + timedelta(hours=24))
             await interaction.response.send_message(
-                f"⏰ You already claimed your daily Candy. Try again <t:{timestamp}:R>.", ephemeral=True
-            )
+                view=daily_cooldown_view(interaction.user, next_at, reward, boost), ephemeral=True)
             return
         await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, reward,
                  {"boost_role": boost.get("role_name") if boost else None, "multiplier": boost.get("multiplier") if boost else 1})
-        if boost:
-            await interaction.response.send_message(
-                f"🎃 You claimed your daily reward: **+{reward:,} 🍬 Candy** (**{boost['multiplier']:g}× boost** from **{boost['role_name']}**)!"
-            )
-        else:
-            await interaction.response.send_message(f"🎃 You claimed your daily reward: **+{reward:,} 🍬 Candy**!")
+        await interaction.response.send_message(
+            view=daily_claimed_view(interaction.user, reward, boost, updated["balance"], now + timedelta(hours=24)),
+            allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
