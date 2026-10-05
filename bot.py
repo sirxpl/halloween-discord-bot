@@ -54,6 +54,7 @@ logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
 give_limits = db["give_limits"]
+trick_limits = db["trick_limits"]
 shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
@@ -830,12 +831,14 @@ def calculate_daily_reward(base_reward, role_ids, guild_id):
 
 
 # =====================================================================
-#  /give LIMITS
+#  USAGE LIMITS (/give and /trickortreat)
 #  Per-server config: an on/off switch plus any number of rules. A rule is
-#  "members may give at most N Candy per hour/day/week", applied to everyone
-#  or only to members holding one of the chosen roles. Windows are rolling
-#  (the last 60 minutes / 24 hours / 7 days), measured from the activity log.
-#  If several rules apply to a member, every one of them must pass.
+#  "members may do this N times / give N Candy per hour, day or week", applied
+#  to everyone or only to members holding one of the chosen roles. Windows are
+#  rolling (last 60 minutes / 24 hours / 7 days), measured from the activity
+#  log. If several rules apply to a member, every one of them must pass.
+#    give         -> the limit is an amount of Candy given
+#    trickortreat -> the limit is a number of trick-or-treats
 # =====================================================================
 GIVE_LIMIT_PERIODS = {
     "hour": ("Per hour", timedelta(hours=1)),
@@ -843,11 +846,14 @@ GIVE_LIMIT_PERIODS = {
     "week": ("Per week", timedelta(weeks=1)),
 }
 GIVE_LIMIT_MAX_RULES = 20
-GIVE_LIMIT_MAX_AMOUNT = 100000000
+LIMIT_KINDS = {
+    "give": {"coll": give_limits, "action": "give", "log": "give_limits", "count_uses": False, "max": 100000000},
+    "trickortreat": {"coll": trick_limits, "action": "trick_or_treat", "log": "trick_limits", "count_uses": True, "max": 1000},
+}
 
 
-def get_give_limits(guild_id):
-    record = give_limits.find_one({"guild_id": int(guild_id)}) or {}
+def get_limit_config(kind, guild_id):
+    record = LIMIT_KINDS[kind]["coll"].find_one({"guild_id": int(guild_id)}) or {}
     rules = []
     for rule in record.get("rules", []):
         if rule.get("period") not in GIVE_LIMIT_PERIODS:
@@ -862,8 +868,8 @@ def get_give_limits(guild_id):
     return {"enabled": bool(record.get("enabled", False)), "rules": rules}
 
 
-def set_give_limits_enabled(guild_id, enabled, updated_by=None):
-    give_limits.update_one(
+def set_limit_enabled(kind, guild_id, enabled, updated_by=None):
+    LIMIT_KINDS[kind]["coll"].update_one(
         {"guild_id": int(guild_id)},
         {"$set": {"guild_id": int(guild_id), "enabled": bool(enabled),
                   "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None}},
@@ -871,7 +877,7 @@ def set_give_limits_enabled(guild_id, enabled, updated_by=None):
     )
 
 
-def set_give_limit_rules(guild_id, rules, valid_role_ids, updated_by=None):
+def set_limit_rules(kind, guild_id, rules, valid_role_ids, updated_by=None):
     """Replace the saved rules. Raises ValueError on anything invalid."""
     if len(rules) > GIVE_LIMIT_MAX_RULES:
         raise ValueError("Too many rules.")
@@ -879,7 +885,7 @@ def set_give_limit_rules(guild_id, rules, valid_role_ids, updated_by=None):
     cleaned = []
     for rule in rules:
         amount = int(rule["amount"])
-        if amount < 1 or amount > GIVE_LIMIT_MAX_AMOUNT:
+        if amount < 1 or amount > LIMIT_KINDS[kind]["max"]:
             raise ValueError("Limit amount out of range.")
         if rule["period"] not in GIVE_LIMIT_PERIODS:
             raise ValueError("Unknown period.")
@@ -893,7 +899,7 @@ def set_give_limit_rules(guild_id, rules, valid_role_ids, updated_by=None):
                 raise ValueError("Pick at least one valid role.")
         cleaned.append({"id": secrets.token_hex(4), "amount": amount, "period": rule["period"],
                         "scope": scope, "role_ids": role_ids})
-    give_limits.update_one(
+    LIMIT_KINDS[kind]["coll"].update_one(
         {"guild_id": int(guild_id)},
         {"$set": {"guild_id": int(guild_id), "rules": cleaned,
                   "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None},
@@ -903,15 +909,19 @@ def set_give_limit_rules(guild_id, rules, valid_role_ids, updated_by=None):
     return cleaned
 
 
-def check_give_limits(guild_id, user_id, role_ids, amount):
-    """Check a pending /give against the server's limit rules.
+def check_limits(kind, guild_id, user_id, role_ids, pending=1):
+    """Check a pending action against the server's limit rules.
 
+    `pending` is the Candy amount for /give and is ignored for /trickortreat (one use).
     Returns (blocked, statuses). `statuses` has one entry per rule that applies to this member, each with
     limit / used / remaining / period / resets_at. `blocked` is the most restrictive failing entry, or None.
+    `statuses` is empty when limits are off or no rule applies to the member.
     """
-    config = get_give_limits(guild_id)
+    spec = LIMIT_KINDS[kind]
+    config = get_limit_config(kind, guild_id)
     if not config["enabled"] or not config["rules"]:
         return None, []
+    pending = 1 if spec["count_uses"] else int(pending)
     role_ids = {int(r) for r in role_ids}
     now = now_utc()
     statuses = []
@@ -920,17 +930,18 @@ def check_give_limits(guild_id, user_id, role_ids, amount):
             continue
         window = GIVE_LIMIT_PERIODS[rule["period"]][1]
         entries = list(activity_logs.find(
-            {"action": "give", "guild_id": int(guild_id), "user_id": int(user_id), "created_at": {"$gte": now - window}},
+            {"action": spec["action"], "guild_id": int(guild_id), "user_id": int(user_id), "created_at": {"$gte": now - window}},
             {"amount": 1, "created_at": 1},
         ).sort("created_at", 1))
-        used = sum(int(e.get("amount") or 0) for e in entries)
+        weight = (lambda e: 1) if spec["count_uses"] else (lambda e: int(e.get("amount") or 0))
+        used = sum(weight(e) for e in entries)
         limit = rule["amount"]
         status = {"limit": limit, "used": used, "remaining": max(0, limit - used), "period": rule["period"],
-                  "exceeds": used + amount > limit, "too_big": amount > limit, "resets_at": None}
+                  "exceeds": used + pending > limit, "too_big": pending > limit, "resets_at": None}
         if status["exceeds"] and not status["too_big"]:
-            need, freed = used + amount - limit, 0
+            need, freed = used + pending - limit, 0
             for entry in entries:
-                freed += int(entry.get("amount") or 0)
+                freed += weight(entry)
                 if freed >= need:
                     created = entry["created_at"]
                     if created.tzinfo is None:
@@ -938,9 +949,17 @@ def check_give_limits(guild_id, user_id, role_ids, amount):
                     status["resets_at"] = created + window
                     break
         statuses.append(status)
-    failing = [s for s in statuses if s["exceeds"]]
-    blocked = min(failing, key=lambda s: s["remaining"]) if failing else None
+    failing = [st for st in statuses if st["exceeds"]]
+    blocked = min(failing, key=lambda st: st["remaining"]) if failing else None
     return blocked, statuses
+
+
+def get_give_limits(guild_id):
+    return get_limit_config("give", guild_id)
+
+
+def check_give_limits(guild_id, user_id, role_ids, amount):
+    return check_limits("give", guild_id, user_id, role_ids, amount)
 
 
 # =====================================================================
@@ -978,6 +997,7 @@ LOG_EVENTS = {
     "daily_boost":         ("admin", "⚡", "Daily Boost Set", 0),
     "daily_boost_removed": ("admin", "⚡", "Daily Boost Removed", 0),
     "give_limits":         ("admin", "🎁", "Give Limits Updated", 0),
+    "trick_limits":        ("admin", "🎃", "Trick-or-Treat Limits Updated", 0),
     "economy_settings":    ("admin", "⚙️", "Economy Settings Changed", 0),
     "logging_test":        ("system", "🧪", "Logging Test", 0),
 }
@@ -1821,9 +1841,15 @@ def access_control_page():
             key=lambda item: item["name"].lower(),
         )
     saved_daily_boosts = get_daily_boosts(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
-    give_limit_config = get_give_limits(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {"enabled": False, "rules": []}
-    # Discord IDs are bigger than JavaScript can hold exactly, so the page gets them as strings.
-    give_limit_rules_js = [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in give_limit_config["rules"]]
+    limit_cards = {}
+    for limit_kind in LIMIT_KINDS:
+        config = get_limit_config(limit_kind, int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {"enabled": False, "rules": []}
+        limit_cards[limit_kind] = {
+            "enabled": config["enabled"],
+            "rules": config["rules"],
+            # Discord IDs are bigger than JavaScript can hold exactly, so the page gets them as strings.
+            "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in config["rules"]],
+        }
     return render_template(
         "access_control.html",
         user=user,
@@ -1835,10 +1861,9 @@ def access_control_page():
         boost_guild_id=selected_boost_guild_id,
         boost_roles=boost_roles,
         daily_boosts=saved_daily_boosts,
-        give_limit_config=give_limit_config,
+        limit_cards=limit_cards,
         give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
         give_limit_max_rules=GIVE_LIMIT_MAX_RULES,
-        give_limit_rules_js=give_limit_rules_js,
     )
 
 
@@ -1910,36 +1935,46 @@ def access_control_daily_boost_remove():
     return redirect(url_for("access_control_page", boost_guild=guild_id, saved="boost_removed"))
 
 
-@app.post("/access-control/give-limits/toggle")
-def access_control_give_limits_toggle():
+def _limits_redirect(kind, guild_id, **params):
+    return redirect(url_for("access_control_page", boost_guild=guild_id, **params) + f"#limits-{kind}")
+
+
+@app.post("/access-control/limits/<kind>/toggle")
+def access_control_limits_toggle(kind):
     user = session.get("discord_user")
     if not user:
         return redirect(url_for("login"))
     if not is_admin(user["id"]):
         return "Forbidden", 403
+    if kind not in LIMIT_KINDS:
+        return "Not found", 404
+    guild_id = request.form.get("guild_id", "")
     try:
-        guild_id = int(request.form.get("guild_id", ""))
+        guild_id = int(guild_id)
         enabled = request.form.get("enabled") == "1"
         bot = BOT.get("instance")
         if not (bot and not bot.is_closed() and bot.get_guild(guild_id)):
             raise ValueError
-        set_give_limits_enabled(guild_id, enabled, user["id"])
-        log_activity("give_limits", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+        set_limit_enabled(kind, guild_id, enabled, user["id"])
+        log_activity(LIMIT_KINDS[kind]["log"], user_id=user["id"], username=user.get("username"), guild_id=guild_id,
                      details={"enabled": enabled, "changed_by": user["id"]})
     except (TypeError, ValueError):
-        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_give_limit") + "#give-limits")
-    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="give_limits") + "#give-limits")
+        return _limits_redirect(kind, guild_id, error=f"limit_{kind}")
+    return _limits_redirect(kind, guild_id, saved=f"limits_{kind}")
 
 
-@app.post("/access-control/give-limits/save")
-def access_control_give_limits_save():
+@app.post("/access-control/limits/<kind>/save")
+def access_control_limits_save(kind):
     user = session.get("discord_user")
     if not user:
         return redirect(url_for("login"))
     if not is_admin(user["id"]):
         return "Forbidden", 403
+    if kind not in LIMIT_KINDS:
+        return "Not found", 404
+    guild_id = request.form.get("guild_id", "")
     try:
-        guild_id = int(request.form.get("guild_id", ""))
+        guild_id = int(guild_id)
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         if guild is None:
@@ -1955,12 +1990,12 @@ def access_control_give_limits_save():
                 "role_ids": request.form.getlist(f"roles_{index}"),
             })
         valid_roles = [role.id for role in guild.roles if not role.is_default()]
-        cleaned = set_give_limit_rules(guild_id, rules, valid_roles, user["id"])
-        log_activity("give_limits", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+        cleaned = set_limit_rules(kind, guild_id, rules, valid_roles, user["id"])
+        log_activity(LIMIT_KINDS[kind]["log"], user_id=user["id"], username=user.get("username"), guild_id=guild_id,
                      details={"rule_count": len(cleaned), "changed_by": user["id"]})
     except (TypeError, ValueError):
-        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_give_limit") + "#give-limits")
-    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="give_limits") + "#give-limits")
+        return _limits_redirect(kind, guild_id, error=f"limit_{kind}")
+    return _limits_redirect(kind, guild_id, saved=f"limits_{kind}")
 
 
 @app.post("/access-control/command/<command_name>")
@@ -2440,6 +2475,46 @@ def give_limit_blocked_view(status, amount):
     return candy_notice_view("⏳ Give limit reached", text)
 
 
+TRICK_OR_TREAT_LINES = (
+    "You knocked on a creaky old door and it swung open…",
+    "A friendly ghost dropped a handful of candy in your bag.",
+    "The witch next door was feeling generous tonight.",
+    "A skeleton in a top hat handed you a full-size bar.",
+    "You found a bowl on the porch with a note: \"Take a few!\"",
+    "A pumpkin-headed neighbour tossed you a treat.",
+)
+
+
+def trick_or_treat_view(member, reward, new_balance, limit_status=None, next_at=None):
+    """Components V2 card for a successful /trickortreat."""
+    ui = discord.ui
+    head = (
+        "## 🎃 Trick or Treat!\n"
+        f"{random.choice(TRICK_OR_TREAT_LINES)}\n"
+        f"**Found:** +{int(reward):,} 🍬\n"
+        f"**New balance:** {int(new_balance):,} 🍬"
+    )
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
+    if limit_status:
+        word = GIVE_PERIOD_WORDS[limit_status["period"]]
+        left = max(0, limit_status["limit"] - limit_status["used"] - 1)
+        items += [ui.Separator(), ui.TextDisplay(f"-# {left:,} trick-or-treat{'' if left == 1 else 's'} left this {word}")]
+    elif next_at:
+        items += [ui.Separator(), ui.TextDisplay(f"-# Next trick-or-treat <t:{int(next_at.timestamp())}:R>")]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
+def trick_limit_blocked_view(status):
+    """Private notice when /trickortreat is stopped by a limit rule."""
+    word = GIVE_PERIOD_WORDS[status["period"]]
+    text = f"You've gone trick-or-treating **{status['used']:,} / {status['limit']:,}** times in the last {word}."
+    if status["resets_at"]:
+        text += f"\nYou can go again <t:{int(status['resets_at'].timestamp())}:R>."
+    return candy_notice_view("🏠 No more Candy yet", text)
+
+
 def profile_candy_view(member, user, rank, next_daily=None):
     """Components V2 card for /profile."""
     ui = discord.ui
@@ -2713,36 +2788,51 @@ class HalloweenBot(commands.Cog):
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
     async def trick_or_treat(self, interaction: discord.Interaction):
+        notice = candy_notice_view
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("Server only", "This command can only be used in a server."), ephemeral=True)
             return
         guild_id = interaction.guild.id
         user_id = interaction.user.id
         controls = await db(get_member_controls, guild_id, user_id)
         if controls["blocked_from_candy"]:
-            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server."), ephemeral=True)
             return
+        # Dashboard limits (Access Control) decide how often a member may go. If limits are off, or none of them
+        # applies to this member, the default one-trick-or-treat-per-hour cooldown below is used instead.
+        blocked, statuses = await db(
+            check_limits, "trickortreat", guild_id, user_id, [role.id for role in getattr(interaction.user, "roles", [])])
+        if blocked:
+            await interaction.response.send_message(view=trick_limit_blocked_view(blocked), ephemeral=True)
+            return
+        use_cooldown = not statuses
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
-        cutoff = now - timedelta(hours=1)
         reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
+        query = {"guild_id": guild_id, "user_id": user_id}
+        if use_cooldown:
+            query["$or"] = [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": now - timedelta(hours=1)}}]
         updated = await db(
-            users.find_one_and_update,
-            {"guild_id": guild_id, "user_id": user_id,
-             "$or": [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": cutoff}}]},
+            users.find_one_and_update, query,
             {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
             user = await db(get_user, guild_id, user_id)
-            timestamp = int((user["last_trick_or_treat"] + timedelta(hours=1)).timestamp())
+            last = user["last_trick_or_treat"]
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
             await interaction.response.send_message(
-                f"🏠 No more Candy yet! Try again <t:{timestamp}:R>.", ephemeral=True
-            )
+                view=notice("🏠 No more Candy yet", f"The neighbours are out of treats. Try again <t:{int((last + timedelta(hours=1)).timestamp())}:R>."),
+                ephemeral=True)
             return
         await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)
-        await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
+        tightest = min(statuses, key=lambda st: st["remaining"]) if statuses else None
+        await interaction.response.send_message(
+            view=trick_or_treat_view(interaction.user, reward, updated["balance"], tightest,
+                                     next_at=now + timedelta(hours=1) if use_cooldown else None),
+            allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="add", description="Admin: add Candy to a member's balance.")
     @app_commands.describe(member="Member receiving Candy.", amount="Amount of Candy to add.",
