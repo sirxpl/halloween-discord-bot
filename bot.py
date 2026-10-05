@@ -159,7 +159,7 @@ def dashboard():
         "dashboard.html",
         total_users=total_users,
         total_candy=total_candy,
-        command_count=8,
+        command_count=registered_command_count(9),
         bot_status=discord_status if d["state"] != "online" else "Online",
         discord_status=discord_status,
         db_status=db_status,
@@ -547,6 +547,36 @@ def shop_requirement_text(guild, item):
     return "Requires " + joiner.join(role.mention for role in roles)
 
 
+class OwnedShopView(discord.ui.LayoutView):
+    """The /shop menu belongs to whoever ran the command. Other people get a private 'not yours' reply."""
+
+    def __init__(self, owner_id, timeout=600):
+        super().__init__(timeout=timeout)
+        self.owner_id = int(owner_id)
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                f"🚫 **This isn't yours!** That shop menu belongs to <@{self.owner_id}>. "
+                "Use **/shop** to open your own.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        for child in self.walk_children():
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
 SHOP_RESULT_MESSAGES = {
     "success": "Purchase complete.",
     "unavailable": "That shop item is no longer available.",
@@ -678,26 +708,6 @@ def purchase_shop_item(guild_id, user_id, item_id):
     except Exception:
         log.exception("Purchase succeeded but the activity log entry failed")
     return "success"
-
-
-async def shop_item_autocomplete(interaction: discord.Interaction, current: str):
-    if not interaction.guild: return []
-    controls = await db(get_member_controls, interaction.guild.id, interaction.user.id)
-    if controls["blocked_from_candy"]: return []
-    member = interaction.user  # comes with the member's CURRENT roles
-    items = await db(get_shop_items_for_guild, interaction.guild.id, True)
-    choices = []
-    for item in items:
-        if not member_meets_shop_requirements(member, item): continue
-        if item.get("type") == "role":
-            role_id = item.get("reward", {}).get("role_id")
-            role = interaction.guild.get_role(int(role_id)) if role_id else None
-            if not role or role in getattr(member, "roles", []): continue
-        label = f"{emoji_plain(item.get('emoji'))} {item.get('name', 'Shop Item')} — {int(item.get('price', 0)):,} 🍬".strip()
-        if current.lower() not in label.lower(): continue
-        choices.append(app_commands.Choice(name=label[:100], value=str(item["item_id"])))
-    return choices[:25]
-
 
 
 def get_bot_member(guild_id, user_id):
@@ -1294,7 +1304,7 @@ def economy_page():
     try:
         total_users = users.count_documents({})
         total_candy = sum((doc.get("balance", 0) or 0) for doc in users.find({}, {"balance": 1}))
-        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy"]}}).sort("created_at", -1).limit(12))
+        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy", "shop_purchase"]}}).sort("created_at", -1).limit(12))
     except PyMongoError:
         total_users, total_candy, recent = 0, 0, []
     return render_template("economy.html", config=config, total_users=total_users, total_candy=total_candy, recent=recent)
@@ -1811,7 +1821,7 @@ def statistics_page():
     d = STATE["discord"]
     labels = {"online":"Online","starting":"Starting","connecting":"Connecting","reconnecting":"Reconnecting","rate_limited":"Rate limited","error":"Offline"}
     bot_status = labels.get(d["state"], "Unknown")
-    return render_template("statistics.html", total_users=total_users, total_candy=total_candy, command_count=7, bot_status=bot_status, db_ok=db_ok)
+    return render_template("statistics.html", total_users=total_users, total_candy=total_candy, command_count=registered_command_count(9), bot_status=bot_status, db_ok=db_ok)
 
 @app.get("/daily")
 def daily_page():
@@ -2014,6 +2024,14 @@ async def db(fn, *args, **kwargs):
 
 def now_utc():
     return datetime.now(timezone.utc)
+
+
+def registered_command_count(default=0):
+    bot = BOT.get("instance")
+    try:
+        return len(bot.tree.get_commands()) if bot is not None else default
+    except Exception:
+        return default
 
 
 # ---------- live status tracking (feeds /status and /dashboard) ----------
@@ -2539,34 +2557,17 @@ class HalloweenBot(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="buy", description="Buy an item from the Halloween Candy shop.")
-    @app_commands.describe(item="Choose an eligible shop item.")
-    @app_commands.autocomplete(item=shop_item_autocomplete)
-    async def buy(self, interaction: discord.Interaction, item: str):
+    @app_commands.command(name="shop", description="Browse the Halloween Candy shop and buy items.")
+    async def shop(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True); return
         if (await db(get_member_controls, interaction.guild.id, interaction.user.id))["blocked_from_candy"]:
             await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
         await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
-        await interaction.response.defer(ephemeral=True)
-        result = await db(purchase_shop_item, interaction.guild.id, interaction.user.id, item)
-        embed = discord.Embed(title="🛒 Shop Purchase" if result == "success" else "🎃 Shop",
-                              description=SHOP_RESULT_MESSAGES.get(result, "Purchase failed."),
-                              color=discord.Color.green() if result == "success" else discord.Color.red())
-        item_data = await db(lambda: shop_items.find_one({"guild_id": interaction.guild.id, "item_id": item}))
-        if item_data:
-            embed.add_field(name="Item", value=f"{item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')}", inline=False)
-            embed.add_field(name="Price", value=f"{int(item_data.get('price',0)):,} 🍬", inline=True)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="shop", description="View the Halloween Candy shop.")
-    async def shop(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True); return
         items = await db(get_shop_items_for_guild, interaction.guild.id, True)
         member = interaction.user  # carries the member's current roles
-        view = discord.ui.LayoutView(timeout=600)
-        summary = ["# 🛒 Halloween Candy Shop", "Spend your 🍬 Candy on items configured by the Aureolis Shop Panel."]
+        view = OwnedShopView(interaction.user.id)
+        summary = ["# 🛒 Halloween Candy Shop", f"<@{interaction.user.id}>, spend your 🍬 Candy below. Only you can use these buttons."]
         for item_data in items:
             eligible = member_meets_shop_requirements(member, item_data)
             requirement = shop_requirement_text(interaction.guild, item_data)
@@ -2588,6 +2589,8 @@ class HalloweenBot(commands.Cog):
 
             async def callback(btn_interaction, item_id=str(item_data["item_id"])):
                 await btn_interaction.response.defer(ephemeral=True)
+                if (await db(get_member_controls, btn_interaction.guild.id, btn_interaction.user.id))["blocked_from_candy"]:
+                    await btn_interaction.followup.send("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
                 result = await db(purchase_shop_item, btn_interaction.guild.id, btn_interaction.user.id, item_id)
                 item_now = await db(lambda: shop_items.find_one({"guild_id": btn_interaction.guild.id, "item_id": item_id}))
                 embed = discord.Embed(title="🛒 Purchase Complete" if result == "success" else "🎃 Shop",
@@ -2603,7 +2606,8 @@ class HalloweenBot(commands.Cog):
             row = discord.ui.ActionRow()
             for button in buttons[start:start + 5]: row.add_item(button)
             view.add_item(discord.ui.Container(row))
-        await interaction.response.send_message(view=view)
+        await interaction.response.send_message(view=view, allowed_mentions=discord.AllowedMentions.none())
+        view.message = await interaction.original_response()
 
     @app_commands.command(name="profile", description="View your Candy profile.")
     async def profile(self, interaction: discord.Interaction):
