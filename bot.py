@@ -3065,33 +3065,9 @@ class AccessControlledTree(app_commands.CommandTree):
             )
             return False
 
-        # First-use gate: every slash command needs a Discord authorization, an accepted
-        # Terms/Privacy version, and DMs enabled. Fails closed if it can't be verified.
-        try:
-            status = await db(user_authorization_status, interaction.user.id)
-        except PyMongoError:
-            log.exception("Could not check authorization for %s", interaction.user.id)
-            await interaction.response.send_message(
-                "🎃 I can't verify your authorization right now. Please try again in a moment.",
-                ephemeral=True,
-            )
-            return False
-        if status == "ok":
-            return True
-
-        base = public_base_url()
-        if not base:
-            log.error("Authorization is required but OAUTH2_REDIRECT_URI/PUBLIC_BASE_URL is not configured.")
-            await interaction.response.send_message(
-                "🎃 Authorization isn't set up yet. Please let a server admin know.",
-                ephemeral=True,
-            )
-            return False
-        await interaction.response.send_message(
-            view=authorization_required_view(status, f"{base}/authorize"),
-            ephemeral=True,
-        )
-        return False
+        # First-use Discord authorization is disabled. Slash commands are available
+        # immediately after the normal command-access check above. The legacy OAuth
+        # authorization routes remain available for dashboard/admin flows.
 
 
 def create_bot():
