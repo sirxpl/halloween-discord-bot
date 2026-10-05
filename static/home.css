@@ -67,3 +67,16 @@ footer{text-align:center;color:#655e6e;font-size:12px;padding:24px 0 38px}footer
 @media(max-width:700px){.legal-summary{grid-template-columns:1fr}.legal-section{padding:20px}.hero>p.legal-note{margin:-30px auto 46px}}
 .legal>.eyebrow{display:block;color:#a875e8;font-size:11px;font-weight:800;letter-spacing:.16em;margin-bottom:6px}
 .legal-ai-note{margin:22px 0 0;padding:14px 16px;border:1px dashed #3a2d4a;border-radius:12px;color:#8f879f;font-size:12.5px;line-height:1.6;background:rgba(124,58,237,.06)}
+
+/* Authorization / consent pages */
+.consent .legal-lead{margin-bottom:18px}
+.consent-alert,.consent-ok{border-radius:14px;padding:14px 18px;font-size:14px;line-height:1.6;margin:0 0 14px}
+.consent-alert{background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35);color:#fecaca}
+.consent-ok{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.35);color:#bbf7d0}
+.consent-form{margin-top:14px;background:rgba(18,14,24,.75);border:1px solid #292130;border-radius:18px;padding:24px 26px}
+.consent-check{display:flex;gap:12px;align-items:flex-start;margin:0 0 16px;color:#d6cee2;font-size:14.5px;line-height:1.6;cursor:pointer}
+.consent-check input{width:18px;height:18px;margin-top:3px;accent-color:#8c4fe8;flex:none;cursor:pointer}
+.consent-btn{margin-top:6px;padding:13px 22px;border:0;border-radius:12px;font:inherit;font-weight:700;font-size:14px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#8c4fe8,#c46cff);box-shadow:0 12px 35px rgba(130,65,220,.24)}
+.consent-btn:hover{filter:brightness(1.08)}
+.consent-btn:disabled{opacity:.5;cursor:not-allowed}
+.consent-fine{margin:14px 0 0;color:#7d7589;font-size:12.5px;line-height:1.6}
