@@ -1,1 +1,212 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Shop Panel</title><link rel="stylesheet" href="{{ url_for('static',filename='dashboard.css',v='20261004') }}"><style>.wrap{max-width:1050px;margin:auto}.card{background:#12121c;border:1px solid #29293a;border-radius:16px;padding:24px;margin:20px 0}.field{padding:12px;background:#171722;color:#fff;border:1px solid #343447;border-radius:9px;width:100%;margin:8px 0}.row{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid #29293a;padding:14px;border-radius:10px;margin-top:10px}.btn{padding:11px 15px;background:#163523;color:#86efac;border:1px solid #245b3b;border-radius:9px;cursor:pointer}.muted{color:#aaaabd;font-size:13px}@media(max-width:650px){.row{display:block}}</style></head><body>{% include "_sidebar.html" %}<main class="dashboard-main wrap"><div class="eyebrow">AUREOLIS • ADMIN CONTROL</div><h1>🛒 Shop Panel</h1><p class="muted">Add anything to the Candy shop. Each item can have multiple required roles using ANY or ALL mode.</p>{% if request.args.get('saved') %}<p>✅ Shop item added.</p>{% endif %}{% if request.args.get('removed') %}<p>🗑️ Shop item removed.</p>{% endif %}{% if request.args.get('error') %}<p style="color:#fca5a5">Invalid item configuration.</p>{% endif %}<section class="card"><h2>Select server</h2>{% if bot_guilds %}<form method="get"><select class="field" name="guild" onchange="this.form.submit()">{% for g in bot_guilds %}<option value="{{ g.id }}" {% if g.id|string==guild_id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></form><h2>Add Shop Item</h2><form method="post" action="/shop-panel/save"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input class="field" type="text" name="name" maxlength="100" placeholder="Item name" required><textarea class="field" name="description" maxlength="1000" placeholder="Description"></textarea><div style="display:grid;grid-template-columns:1fr 2fr;gap:10px"><input class="field" type="text" name="emoji" maxlength="10" value="🎃" placeholder="Emoji"><input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" required></div><select class="field" name="item_type"><option value="custom">Custom Item — adds to inventory</option><option value="role">Discord Role — grants a role</option></select><select class="field" name="role_id"><option value="">Role reward (required for Discord Role)</option>{% for role in roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select><label class="muted">Required roles — select one or more (optional)</label><select class="field" name="required_role_ids" multiple size="7">{% for role in roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select><select class="field" name="requirement_mode"><option value="any">ANY — member needs at least one selected role</option><option value="all">ALL — member needs every selected role</option></select><label class="muted"><input type="checkbox" name="enabled" checked> Enabled in the shop</label><div style="margin-top:14px"><button class="btn" type="submit">➕ Add Shop Item</button></div></form>{% else %}<p>Bot is not connected to any servers.</p>{% endif %}</section><section class="card"><h2>Configured Shop Items</h2>{% for item in listings %}<div class="row"><div><strong>{{ item.get('emoji','🎃') }} {{ item.get('name','Shop Item') }}</strong><div class="muted">🍬 {{ "{:,}".format(item.get('price',0)) }} · {{ item.get('type','custom') }} · {{ 'Enabled' if item.get('enabled',True) else 'Disabled' }}</div><div class="muted">{% set req=item.get('required_role_ids',[]) %}{% if req %}Requires <strong>{{ 'ALL' if item.get('requirement_mode')=='all' else 'ANY' }}</strong>: {% for rid in req %}{% set role=roles|selectattr('id','equalto',rid|string)|first %}{{ role.name if role else ('Role ' ~ rid) }}{% if not loop.last %}{{ ' + ' if item.get('requirement_mode')=='all' else ' / ' }}{% endif %}{% endfor %}{% else %}No required roles{% endif %}</div></div><form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="item_id" value="{{ item.get('item_id') }}"><button class="btn" type="submit">Remove</button></form></div>{% else %}<p class="muted">No shop items configured for this server.</p>{% endfor %}</section></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aureolis • Shop Panel</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
+<style>
+.wrap{max-width:1050px;margin:auto}
+.card{background:#12121c;border:1px solid #29293a;border-radius:16px;padding:24px;margin:20px 0}
+.field{display:block;box-sizing:border-box;padding:12px;background:#171722;color:#fff;border:1px solid #343447;border-radius:9px;width:100%;margin:8px 0;font:inherit}
+.field:focus{outline:2px solid #7c3aed55;border-color:#7c3aed}
+textarea.field{min-height:84px;resize:vertical}
+.lbl{display:block;margin-top:14px;font-size:12px;font-weight:800;letter-spacing:.04em;color:#c9c3d8}
+.group{border:1px solid #2c2c40;border-radius:13px;padding:6px 16px 14px;margin:18px 0 0;background:rgba(255,255,255,.015)}
+.group legend{padding:0 8px;font-size:12px;font-weight:800;letter-spacing:.04em;color:#c4b5fd}
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;border:1px solid #29293a;padding:14px;border-radius:10px;margin-top:10px}
+.btn{padding:11px 15px;background:#163523;color:#86efac;border:1px solid #245b3b;border-radius:9px;cursor:pointer;font:inherit}
+.muted{color:#aaaabd;font-size:13px}
+.msg{padding:12px 14px;border-radius:10px;margin:14px 0;font-size:14px;line-height:1.5}
+.msg.ok{background:#163523;color:#86efac}.msg.err{background:#3b1717;color:#fca5a5}
+.badge{display:inline-block;font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px;margin-left:6px}
+.badge.warn{background:#3a2c0c;color:#fcd34d}.badge.off{background:#232030;color:#9b94ad}.badge.on{background:#163523;color:#86efac}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hidden{display:none!important}
+
+/* dropdowns (same look as the native selects) */
+.dd{position:relative;margin:8px 0}
+.dd>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0}
+.dd>summary::-webkit-details-marker{display:none}
+.dd>summary .caret{color:#8f879f;font-size:12px;transition:transform .15s}
+.dd[open]>summary .caret{transform:rotate(180deg)}
+.dd[open]>summary{border-color:#7c3aed}
+.dd-panel{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:40;background:#171722;border:1px solid #343447;border-radius:10px;box-shadow:0 18px 40px rgba(0,0,0,.55);overflow:hidden}
+.dd-search{display:block;box-sizing:border-box;width:100%;padding:11px 12px;background:#10101a;color:#fff;border:0;border-bottom:1px solid #2c2c40;font:inherit}
+.dd-search:focus{outline:none}
+.dd-list{max-height:260px;overflow-y:auto}
+.dd-opt{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;font-size:14px}
+.dd-opt:hover{background:#20202f}.dd-opt input{accent-color:#7c3aed;width:16px;height:16px;margin:0}
+.dd-opt .dot{width:11px;height:11px;border-radius:50%;flex:none}
+.dd-empty{padding:14px;color:#8f879f;font-size:13px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.chip{background:#241a3a;border:1px solid #4b2f86;color:#e4d7ff;border-radius:99px;padding:3px 10px;font-size:12px}
+
+/* emoji picker */
+.emoji-line{display:flex;gap:10px;align-items:center}
+.emoji-preview{flex:none;width:46px;height:46px;border-radius:10px;background:#171722;border:1px solid #343447;display:grid;place-items:center;font-size:24px}
+.emoji-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:6px;padding:10px;max-height:240px;overflow-y:auto}
+.emoji-pick{background:#10101a;border:1px solid #2c2c40;border-radius:8px;padding:6px;cursor:pointer;display:grid;place-items:center}
+.emoji-pick:hover{border-color:#7c3aed;background:#1c1630}.emoji-pick img{width:28px;height:28px;object-fit:contain}
+@media(max-width:650px){.row{display:block}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+{% include "_sidebar.html" %}
+<main class="dashboard-main wrap">
+<div class="eyebrow">AUREOLIS • ADMIN CONTROL</div>
+<h1>🛒 Shop Panel</h1>
+<p class="muted">Add anything to the Candy shop. Choose what members receive, and who is allowed to buy it.</p>
+
+{% if request.args.get('saved') %}<div class="msg ok">✅ Shop item added.</div>{% endif %}
+{% if request.args.get('removed') %}<div class="msg ok">🗑️ Shop item removed.</div>{% endif %}
+{% if error_message %}<div class="msg err">⚠️ {{ error_message }}</div>{% endif %}
+
+<section class="card">
+{% if bot_guilds %}
+<h2>Select server</h2>
+<form method="get"><select class="field" name="guild" onchange="this.form.submit()">{% for g in bot_guilds %}<option value="{{ g.id }}" {% if g.id|string==guild_id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></form>
+
+<h2 style="margin-top:26px">Add Shop Item</h2>
+<form method="post" action="/shop-panel/save" id="item-form" autocomplete="off">
+  <input type="hidden" name="guild_id" value="{{ guild_id }}">
+
+  <label class="lbl">ITEM NAME</label>
+  <input class="field" type="text" name="name" maxlength="100" placeholder="Item name" required>
+  <label class="lbl">DESCRIPTION</label>
+  <textarea class="field" name="description" maxlength="1000" placeholder="Description"></textarea>
+
+  <div class="grid2">
+    <div>
+      <label class="lbl">EMOJI</label>
+      <div class="emoji-line">
+        <div class="emoji-preview" id="emoji-preview">🎃</div>
+        <input class="field" style="margin:0" type="text" name="emoji" id="emoji-input" maxlength="64" value="🎃" placeholder="🎃 or a custom emoji">
+      </div>
+      {% if emojis %}
+      <details class="dd" id="emoji-dd">
+        <summary class="field"><span>Pick a server emoji</span><span class="caret">▾</span></summary>
+        <div class="dd-panel"><div class="emoji-grid">{% for e in emojis %}<button type="button" class="emoji-pick" data-value="{{ e.value }}" title=":{{ e.name }}:"><img src="{{ e.url }}?size=64" alt=":{{ e.name }}:" loading="lazy"></button>{% endfor %}</div></div>
+      </details>
+      {% endif %}
+      <div class="muted" style="margin-top:6px">Normal emoji work, and so do custom server emoji (animated too).{% if not emojis %} This server has no custom emoji, but you can paste one like <code>&lt;:name:123456789012345678&gt;</code>.{% endif %}</div>
+    </div>
+    <div>
+      <label class="lbl">CANDY PRICE</label>
+      <input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" required>
+    </div>
+  </div>
+
+  <fieldset class="group">
+    <legend>What the user will receive</legend>
+    <select class="field" name="item_type" id="item-type">
+      <option value="custom">Custom Item — adds to inventory</option>
+      <option value="role">Discord Role — grants a role</option>
+    </select>
+    <div id="reward-wrap">
+      <select class="field" name="role_id" id="reward-role">
+        <option value="">Choose the role to give…</option>
+        {% for role in roles %}<option value="{{ role.id }}">{{ role.name }}{% if not role.assignable %} ⚠ bot can't give this{% endif %}</option>{% endfor %}
+      </select>
+      <div class="muted">⚠ roles need the bot's role to sit above them with Manage Roles enabled.</div>
+    </div>
+  </fieldset>
+
+  <fieldset class="group">
+    <legend>Who can buy this?</legend>
+    <select class="field" name="requirement_mode" id="req-mode">
+      <option value="everyone">Everyone — any member can buy it</option>
+      <option value="any">Members with ANY of the selected roles</option>
+      <option value="all">Members with ALL of the selected roles</option>
+    </select>
+    <div id="req-wrap" class="hidden">
+      <details class="dd" id="req-dd">
+        <summary class="field"><span id="req-label">Select required roles…</span><span class="caret">▾</span></summary>
+        <div class="dd-panel">
+          <input type="search" class="dd-search" id="req-search" placeholder="Search roles…">
+          <div class="dd-list" id="req-list">
+            {% for role in roles %}
+            <label class="dd-opt" data-name="{{ role.name|lower }}"><input type="checkbox" name="required_role_ids" value="{{ role.id }}" data-label="{{ role.name }}"><i class="dot" style="background:{{ role.color }}"></i><span>{{ role.name }}</span></label>
+            {% else %}<div class="dd-empty">This server has no roles to pick from.</div>{% endfor %}
+          </div>
+        </div>
+      </details>
+      <div class="chips" id="req-chips"></div>
+    </div>
+  </fieldset>
+
+  <label class="muted" style="display:block;margin-top:18px"><input type="checkbox" name="enabled" checked> Enabled in the shop</label>
+  <div style="margin-top:14px"><button class="btn" type="submit">➕ Add Shop Item</button></div>
+</form>
+{% else %}<p>Bot is not connected to any servers.</p>{% endif %}
+</section>
+
+<section class="card">
+<h2>Configured Shop Items</h2>
+{% for item in listings %}
+<div class="row">
+  <div>
+    <strong>{{ item.get('emoji','🎃')|emoji }} {{ item.get('name','Shop Item') }}</strong>
+    <span class="badge {{ 'on' if item.get('enabled',True) else 'off' }}">{{ 'Enabled' if item.get('enabled',True) else 'Disabled' }}</span>
+    {% if item.cannot_assign %}<span class="badge warn" title="Move the bot's role above this reward role and give it Manage Roles">⚠ bot can't give this role</span>{% endif %}
+    <div class="muted">🍬 {{ "{:,}".format(item.get('price',0)) }} · {{ item.get('type','custom') }}{% if item.get('type')=='role' and item.get('reward',{}).get('role_name') %} · {{ item.reward.role_name }}{% endif %}</div>
+    <div class="muted">
+      {% if item.mode=='everyone' %}👥 Everyone can buy
+      {% else %}Requires <strong>{{ 'ALL' if item.mode=='all' else 'ANY' }}</strong>:
+        {% for rid in item.get('required_role_ids',[]) %}{% set role=roles|selectattr('id','equalto',rid|string)|first %}{{ role.name if role else ('Role ' ~ rid) }}{% if not loop.last %}{{ ' + ' if item.mode=='all' else ' / ' }}{% endif %}{% endfor %}
+      {% endif %}
+    </div>
+  </div>
+  <form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="item_id" value="{{ item.get('item_id') }}"><button class="btn" type="submit">Remove</button></form>
+</div>
+{% else %}<p class="muted">No shop items configured for this server.</p>{% endfor %}
+</section>
+</main>
+
+<script>
+(function(){
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  /* show only the fields that matter */
+  const type = $('#item-type'), reward = $('#reward-wrap'), mode = $('#req-mode'), reqWrap = $('#req-wrap');
+  function sync(){
+    if (!type) return;
+    reward.classList.toggle('hidden', type.value !== 'role');
+    reqWrap.classList.toggle('hidden', mode.value === 'everyone');
+  }
+  type && type.addEventListener('change', sync); mode && mode.addEventListener('change', sync); sync();
+
+  /* required-roles dropdown: label, chips, search */
+  const list = $('#req-list'), label = $('#req-label'), chips = $('#req-chips'), search = $('#req-search');
+  function refresh(){
+    if (!list) return;
+    const picked = $$('input:checked', list).map(i => i.dataset.label);
+    label.textContent = picked.length ? (picked.length === 1 ? picked[0] : picked.length + ' roles selected') : 'Select required roles…';
+    chips.innerHTML = '';
+    picked.forEach(n => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = n; chips.appendChild(c); });
+  }
+  list && list.addEventListener('change', refresh);
+  search && search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    $$('.dd-opt', list).forEach(o => o.classList.toggle('hidden', q && !o.dataset.name.includes(q)));
+  });
+
+  /* emoji preview + picker */
+  const input = $('#emoji-input'), preview = $('#emoji-preview');
+  const custom = /^<(a?):(\w{2,32}):(\d{15,25})>$/;
+  function draw(){
+    const v = input.value.trim(), m = v.match(custom);
+    preview.textContent = '';
+    if (m) { const img = document.createElement('img'); img.width = 30; img.height = 30; img.src = 'https://cdn.discordapp.com/emojis/' + m[3] + (m[1] ? '.gif' : '.webp') + '?size=64'; preview.appendChild(img); }
+    else preview.textContent = v || '🎃';
+  }
+  input && input.addEventListener('input', draw);
+  $$('.emoji-pick').forEach(b => b.addEventListener('click', () => { input.value = b.dataset.value; draw(); $('#emoji-dd').open = false; }));
+
+  /* close dropdowns when clicking elsewhere */
+  document.addEventListener('click', e => $$('details.dd[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+  draw(); refresh();
+})();
+</script>
+</body>
+</html>
