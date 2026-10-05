@@ -483,8 +483,35 @@ def purchase_shop_item(guild_id, user_id, item_id):
         if charged is None: return "not_enough"
         if role is not None:
             try:
-                asyncio.run_coroutine_threadsafe(member.add_roles(role, reason=f"Shop purchase: {item.get('name', role.name)}"), bot.loop).result(timeout=10)
+                future = asyncio.run_coroutine_threadsafe(
+                    member.add_roles(
+                        role,
+                        reason=f"Shop purchase: {item.get('name', role.name)}",
+                    ),
+                    bot.loop,
+                )
+                future.result(timeout=15)
+
+                # Confirm Discord actually applied the role before reporting success.
+                verify_future = asyncio.run_coroutine_threadsafe(
+                    guild.fetch_member(int(user_id)),
+                    bot.loop,
+                )
+                verified_member = verify_future.result(timeout=10)
+                if role.id not in {r.id for r in verified_member.roles}:
+                    raise RuntimeError(
+                        f"Discord did not report role {role.id} ({role.name!r}) "
+                        f"on member {user_id} after add_roles completed."
+                    )
             except Exception:
+                log.exception(
+                    "Shop role assignment failed: guild=%s user=%s role=%s (%s) item=%s",
+                    guild_id,
+                    user_id,
+                    role.id if role else None,
+                    role.name if role else None,
+                    item.get("item_id"),
+                )
                 users.update_one({"guild_id": int(guild_id), "user_id": int(user_id)},
                                  {"$inc": {"balance": price}, "$pull": {"inventory": {"item_id": item["item_id"], "purchased_at": inventory_entry["purchased_at"]}}})
                 return "assignment_failed"
