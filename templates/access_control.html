@@ -53,6 +53,46 @@
   </style>
 </head>
 <body>
+{% macro limit_card(kind, icon, title, intro, amount_label, note) %}
+{% set cfg = limit_cards[kind] %}
+<div class="access-card" id="limits-{{ kind }}">
+  <div class="access-header">
+    <div><h2>{{ icon }} {{ title }}</h2><p class="muted">{{ intro|safe }}</p></div>
+    <span class="access-badge">{{ cfg.rules|length }} limit{% if cfg.rules|length != 1 %}s{% endif %}</span>
+  </div>
+  {% if request.args.get('saved') == 'limits_' ~ kind %}<div class="gl-flash ok">✓ Limits saved.</div>{% endif %}
+  {% if request.args.get('error') == 'limit_' ~ kind %}<div class="gl-flash err">Those limits could not be saved. Check that every limit has an amount, and that "Specific roles" limits have at least one role selected.</div>{% endif %}
+  {% if bot_guilds %}
+  <form method="get" action="{{ url_for('access_control_page') }}#limits-{{ kind }}" style="margin-top:18px">
+    <label class="muted" for="gl-guild-{{ kind }}">Server</label>
+    <select id="gl-guild-{{ kind }}" name="boost_guild" class="command-search" style="margin-top:7px" onchange="this.form.submit()">
+      {% for guild in bot_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}
+    </select>
+  </form>
+  <div class="server-row" style="margin-top:14px">
+    <div><div class="server-name">{{ title }}</div><div class="server-id">{{ 'Limits are being enforced.' if cfg.enabled else 'Off — no limits are enforced in this server.' }}</div></div>
+    <form method="post" action="{{ url_for('access_control_limits_toggle', kind=kind) }}" style="margin:0">
+      <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+      <input type="hidden" name="enabled" value="{{ 0 if cfg.enabled else 1 }}">
+      <button class="command-toggle {{ 'enabled' if cfg.enabled else 'disabled' }}" type="submit">{{ '✓ Enabled' if cfg.enabled else '✕ Disabled' }}</button>
+    </form>
+  </div>
+  <form method="post" action="{{ url_for('access_control_limits_save', kind=kind) }}" class="gl-form" data-kind="{{ kind }}" data-label="{{ amount_label }}" data-max="{{ 100000000 if kind == 'give' else 1000 }}">
+    <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+    <div class="gl-rows"></div>
+    <p class="muted gl-empty" style="margin-top:14px;display:none">No limits yet. Press <strong>+ Add limit</strong> to create one.</p>
+    <div class="gl-actions">
+      <button type="button" class="command-toggle gl-add-btn gl-add">+ Add limit</button>
+      <button type="submit" class="command-toggle enabled">Save limits</button>
+    </div>
+    <script type="application/json" class="gl-saved">{{ cfg.rules_js|tojson }}</script>
+  </form>
+  <div class="boost-note">{{ note|safe }} Edit or remove limits any time, then press <strong>Save limits</strong> — nothing changes until you save.</div>
+  {% else %}
+    <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so limits cannot be configured.</p>
+  {% endif %}
+</div>
+{% endmacro %}
 {% include "_sidebar.html" %}
 <main class="section-main access-wrap">
   <div class="eyebrow">AUREOLIS • ADMIN CONTROL</div>
@@ -181,51 +221,13 @@
       {% endif %}
     </div>
 
-    <div class="access-card" id="give-limits">
-      <div class="access-header">
-        <div>
-          <h2>🤝 Give Candy Limits</h2>
-          <p class="muted">Cap how much Candy members can give with <strong>/give</strong>. Each limit counts the total Candy a member has given in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow the gift.</p>
-        </div>
-        <span class="access-badge">{{ give_limit_config.rules|length }} limit{% if give_limit_config.rules|length != 1 %}s{% endif %}</span>
-      </div>
+    {{ limit_card("give", "🤝", "Give Candy Limits",
+        "Cap how much Candy members can give with <strong>/give</strong>. Each limit counts the total Candy a member has given in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow the gift.",
+        "Candy limit", "Limits are measured in Candy, not number of gifts. Members who match no limit can give freely.") }}
 
-      {% if request.args.get('saved') == 'give_limits' %}<div class="gl-flash ok">✓ Give limits saved.</div>{% endif %}
-      {% if request.args.get('error') == 'invalid_give_limit' %}<div class="gl-flash err">Those limits could not be saved. Check that every limit has an amount, and that "Specific roles" limits have at least one role selected.</div>{% endif %}
-
-      {% if bot_guilds %}
-      <form method="get" action="{{ url_for('access_control_page') }}#give-limits" style="margin-top:18px">
-        <label class="muted" for="gl-guild">Server</label>
-        <select id="gl-guild" name="boost_guild" class="command-search" style="margin-top:7px" onchange="this.form.submit()">
-          {% for guild in bot_guilds %}
-            <option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>
-          {% endfor %}
-        </select>
-      </form>
-
-      <div class="server-row" style="margin-top:14px">
-        <div><div class="server-name">Give limits</div><div class="server-id">{{ 'Limits are being enforced on /give.' if give_limit_config.enabled else 'Off — /give has no limit in this server.' }}</div></div>
-        <form method="post" action="{{ url_for('access_control_give_limits_toggle') }}" style="margin:0">
-          <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
-          <input type="hidden" name="enabled" value="{{ 0 if give_limit_config.enabled else 1 }}">
-          <button class="command-toggle {{ 'enabled' if give_limit_config.enabled else 'disabled' }}" type="submit">{{ '✓ Enabled' if give_limit_config.enabled else '✕ Disabled' }}</button>
-        </form>
-      </div>
-
-      <form method="post" action="{{ url_for('access_control_give_limits_save') }}" id="give-limit-form">
-        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
-        <div id="gl-rows" class="gl-rows"></div>
-        <p id="gl-empty" class="muted" style="margin-top:14px;display:none">No limits yet. Press <strong>+ Add limit</strong> to create one.</p>
-        <div class="gl-actions">
-          <button type="button" id="gl-add" class="command-toggle gl-add">+ Add limit</button>
-          <button type="submit" class="command-toggle enabled">Save limits</button>
-        </div>
-      </form>
-      <div class="boost-note">Limits are measured in Candy, not number of gifts. You can edit or remove limits at any time, then press <strong>Save limits</strong> — nothing changes until you save.</div>
-      {% else %}
-        <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so give limits cannot be configured.</p>
-      {% endif %}
-    </div>
+    {{ limit_card("trickortreat", "🎃", "Trick or Treat Limits",
+        "Control how often members can use <strong>/trickortreat</strong>. Each limit counts how many times a member has gone in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow another go.",
+        "Max uses", "While limits are enabled, a member who matches <strong>no</strong> limit still gets the default of one trick-or-treat per hour. When limits are disabled, everyone gets that default.") }}
 
     <div class="access-card">
       <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
@@ -261,18 +263,13 @@
   });
 </script>
 
+<script type="application/json" id="gl-roles">{{ boost_roles|tojson }}</script>
+<script type="application/json" id="gl-periods">{{ give_limit_periods|tojson }}</script>
 <script>
 (function () {
-  const form = document.getElementById("give-limit-form");
-  if (!form) return;
-  const roles = {{ boost_roles|tojson }};
-  const saved = {{ give_limit_rules_js|tojson }};
-  const periods = {{ give_limit_periods|tojson }};
+  const roles = JSON.parse(document.getElementById("gl-roles").textContent);
+  const periods = JSON.parse(document.getElementById("gl-periods").textContent);
   const maxRules = {{ give_limit_max_rules }};
-  const list = document.getElementById("gl-rows");
-  const empty = document.getElementById("gl-empty");
-  const addBtn = document.getElementById("gl-add");
-  let counter = 0;
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -283,74 +280,85 @@
     return node;
   }
 
-  function refresh() {
-    const count = list.children.length;
-    empty.style.display = count ? "none" : "block";
-    addBtn.disabled = count >= maxRules;
-    addBtn.style.opacity = count >= maxRules ? ".5" : "1";
-  }
+  function initForm(form) {
+    const list = form.querySelector(".gl-rows");
+    const empty = form.querySelector(".gl-empty");
+    const addBtn = form.querySelector(".gl-add-btn");
+    const saved = JSON.parse(form.querySelector(".gl-saved").textContent);
+    const label = form.dataset.label, max = form.dataset.max;
+    let counter = 0;
 
-  function addRow(rule) {
-    const i = counter++;
-    rule = rule || { amount: "", period: "day", scope: "everyone", role_ids: [] };
-    const row = el("div", { class: "gl-row" });
-    row.appendChild(el("input", { type: "hidden", name: "rule", value: String(i) }));
-
-    const amount = el("input", { type: "number", name: "amount_" + i, min: "1", max: "100000000", step: "1", required: "", placeholder: "Candy limit", class: "command-search", "aria-label": "Candy limit" });
-    amount.value = rule.amount;
-
-    const period = el("select", { name: "period_" + i, class: "command-search", "aria-label": "Period" });
-    periods.forEach(([key, label]) => { const o = el("option", { value: key, text: label }); if (key === rule.period) o.selected = true; period.appendChild(o); });
-
-    const scope = el("select", { name: "scope_" + i, class: "command-search", "aria-label": "Who it affects" });
-    [["everyone", "Everyone"], ["roles", "Specific roles"]].forEach(([key, label]) => { const o = el("option", { value: key, text: label }); if (key === rule.scope) o.selected = true; scope.appendChild(o); });
-
-    const dd = el("details", { class: "role-dd" });
-    const summary = el("summary", { class: "command-search" });
-    const panel = el("div", { class: "role-panel" });
-    const chosen = new Set((rule.role_ids || []).map(String));
-    roles.forEach((role) => {
-      const cb = el("input", { type: "checkbox", name: "roles_" + i, value: role.id });
-      cb.checked = chosen.has(role.id);
-      cb.addEventListener("change", updateSummary);
-      panel.appendChild(el("label", { class: "role-opt" }, [cb, el("span", { text: role.name })]));
-    });
-    function updateSummary() {
-      const picked = roles.filter((r) => panel.querySelector('input[value="' + r.id + '"]').checked).map((r) => r.name);
-      summary.textContent = !picked.length ? "Select roles..." : picked.length <= 2 ? picked.join(", ") : picked.length + " roles selected";
+    function refresh() {
+      const count = list.children.length;
+      empty.style.display = count ? "none" : "block";
+      addBtn.disabled = count >= maxRules;
+      addBtn.style.opacity = count >= maxRules ? ".5" : "1";
     }
-    updateSummary();
-    dd.appendChild(summary); dd.appendChild(panel);
 
-    function syncScope() { dd.style.display = scope.value === "roles" ? "block" : "none"; if (scope.value !== "roles") dd.open = false; }
-    scope.addEventListener("change", syncScope);
-    syncScope();
+    function addRow(rule) {
+      const i = counter++;
+      rule = rule || { amount: "", period: "day", scope: "everyone", role_ids: [] };
+      const row = el("div", { class: "gl-row" });
+      row.appendChild(el("input", { type: "hidden", name: "rule", value: String(i) }));
 
-    const remove = el("button", { type: "button", class: "gl-remove", text: "Remove", "aria-label": "Remove limit" });
-    remove.addEventListener("click", () => { row.remove(); refresh(); });
+      const amount = el("input", { type: "number", name: "amount_" + i, min: "1", max: max, step: "1", required: "", placeholder: label, class: "command-search", "aria-label": label });
+      amount.value = rule.amount;
 
-    [amount, period, scope, dd, remove].forEach((n) => row.appendChild(n));
-    list.appendChild(row);
+      const period = el("select", { name: "period_" + i, class: "command-search", "aria-label": "Period" });
+      periods.forEach(([key, text]) => { const o = el("option", { value: key, text: text }); if (key === rule.period) o.selected = true; period.appendChild(o); });
+
+      const scope = el("select", { name: "scope_" + i, class: "command-search", "aria-label": "Who it affects" });
+      [["everyone", "Everyone"], ["roles", "Specific roles"]].forEach(([key, text]) => { const o = el("option", { value: key, text: text }); if (key === rule.scope) o.selected = true; scope.appendChild(o); });
+
+      const dd = el("details", { class: "role-dd" });
+      const summary = el("summary", { class: "command-search" });
+      const panel = el("div", { class: "role-panel" });
+      const chosen = new Set((rule.role_ids || []).map(String));
+      roles.forEach((role) => {
+        const cb = el("input", { type: "checkbox", name: "roles_" + i, value: role.id });
+        cb.checked = chosen.has(role.id);
+        cb.addEventListener("change", updateSummary);
+        panel.appendChild(el("label", { class: "role-opt" }, [cb, el("span", { text: role.name })]));
+      });
+      function updateSummary() {
+        const picked = roles.filter((r) => panel.querySelector('input[value="' + r.id + '"]').checked).map((r) => r.name);
+        summary.textContent = !picked.length ? "Select roles..." : picked.length <= 2 ? picked.join(", ") : picked.length + " roles selected";
+      }
+      updateSummary();
+      dd.appendChild(summary); dd.appendChild(panel);
+
+      function syncScope() { dd.style.display = scope.value === "roles" ? "block" : "none"; if (scope.value !== "roles") dd.open = false; }
+      scope.addEventListener("change", syncScope);
+      syncScope();
+
+      const remove = el("button", { type: "button", class: "gl-remove", text: "Remove", "aria-label": "Remove limit" });
+      remove.addEventListener("click", () => { row.remove(); refresh(); });
+
+      [amount, period, scope, dd, remove].forEach((n) => row.appendChild(n));
+      list.appendChild(row);
+      refresh();
+    }
+
+    saved.forEach(addRow);
+    addBtn.addEventListener("click", () => addRow());
+    form.addEventListener("submit", (e) => {
+      for (const row of list.children) {
+        const scope = row.querySelector('select[name^="scope_"]');
+        if (scope.value === "roles" && !row.querySelector('input[type="checkbox"]:checked')) {
+          e.preventDefault();
+          row.querySelector("summary").scrollIntoView({ block: "center" });
+          alert('Pick at least one role for every "Specific roles" limit.');
+          return;
+        }
+      }
+    });
     refresh();
   }
 
-  saved.forEach(addRow);
-  addBtn.addEventListener("click", () => addRow());
+  document.querySelectorAll(".gl-form").forEach(initForm);
   document.addEventListener("click", (e) => {
     document.querySelectorAll(".role-dd[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
   });
-  form.addEventListener("submit", (e) => {
-    for (const row of list.children) {
-      const scope = row.querySelector('select[name^="scope_"]');
-      if (scope.value === "roles" && !row.querySelector('input[type="checkbox"]:checked')) {
-        e.preventDefault();
-        row.querySelector("summary").scrollIntoView({ block: "center" });
-        alert('Pick at least one role for every "Specific roles" limit.');
-        return;
-      }
-    }
-  });
-  refresh();
 })();
 </script>
 </body>
