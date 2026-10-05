@@ -2906,6 +2906,24 @@ def trick_or_treat_view(member, reward, new_balance, next_at):
     return view
 
 
+def balance_candy_view(member, balance, server_name):
+    """Components V2 card for /balance. Same layout as the /add card."""
+    ui = discord.ui
+    head = (
+        "## 🍬 Candy Balance\n"
+        f"**Member:** {member.mention}\n"
+        f"**Balance:** {int(balance):,} 🍬"
+    )
+    items = [
+        ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
+        ui.Separator(),
+        ui.TextDisplay(f"-# {server_name} • <t:{int(now_utc().timestamp())}:f>"),
+    ]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
 def daily_claimed_view(member, reward, boost, new_balance, next_at):
     """Components V2 card for a successful /daily."""
     ui = discord.ui
@@ -3199,12 +3217,12 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="balance", description="Check your Candy balance.")
     async def balance(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
         user = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         await interaction.response.send_message(
-            f"🍬 **{interaction.user.display_name}** has **{user['balance']:,} Candy**."
-        )
+            view=balance_candy_view(interaction.user, user["balance"], interaction.guild.name),
+            allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="daily", description="Claim your daily Candy reward.")
     async def daily(self, interaction: discord.Interaction):
