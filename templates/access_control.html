@@ -35,6 +35,7 @@
     .gl-row{position:relative;display:grid;grid-template-columns:.8fr 1fr 1.1fr 1.5fr auto;gap:10px;align-items:start;padding:12px;border:1px solid var(--border);border-radius:12px;background:#171722;margin-top:10px}
     .gl-row .command-search{margin-top:0}
     .gl-rows{margin-top:6px}
+    .gl-row .gl-remove{grid-column:5}
     .gl-remove{padding:11px 13px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
     .gl-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
     .gl-actions .command-toggle{min-width:150px}
@@ -49,19 +50,21 @@
     .gl-flash{margin-top:14px;padding:11px 14px;border-radius:12px;font-size:12px}
     .gl-flash.ok{background:#163523;color:#86efac;border:1px solid #245b3b}
     .gl-flash.err{background:#3b2020;color:#fca5a5;border:1px solid #633232}
-    @media (max-width: 760px){.gl-row{grid-template-columns:1fr}}
+    @media (max-width: 760px){.gl-row{grid-template-columns:1fr}.gl-row .gl-remove{grid-column:auto}}
   </style>
 </head>
 <body>
 {% macro limit_card(kind, icon, title, intro, amount_label, note) %}
 {% set cfg = limit_cards[kind] %}
+{% set cd = (kind == 'trickortreat') %}
+{% set noun = 'cooldown' if cd else 'limit' %}
 <div class="access-card" id="limits-{{ kind }}">
   <div class="access-header">
     <div><h2>{{ icon }} {{ title }}</h2><p class="muted">{{ intro|safe }}</p></div>
-    <span class="access-badge">{{ cfg.rules|length }} limit{% if cfg.rules|length != 1 %}s{% endif %}</span>
+    <span class="access-badge">{{ cfg.rules|length }} {{ noun }}{% if cfg.rules|length != 1 %}s{% endif %}</span>
   </div>
-  {% if request.args.get('saved') == 'limits_' ~ kind %}<div class="gl-flash ok">✓ Limits saved.</div>{% endif %}
-  {% if request.args.get('error') == 'limit_' ~ kind %}<div class="gl-flash err">Those limits could not be saved. Check that every limit has an amount, and that "Specific roles" limits have at least one role selected.</div>{% endif %}
+  {% if request.args.get('saved') == 'limits_' ~ kind %}<div class="gl-flash ok">✓ {{ noun|capitalize }}s saved.</div>{% endif %}
+  {% if request.args.get('error') == 'limit_' ~ kind %}<div class="gl-flash err">Those {{ noun }}s could not be saved. Check that every {{ noun }} has {{ 'a time (up to 7 days)' if cd else 'an amount' }}, and that "Specific roles" {{ noun }}s have at least one role selected.</div>{% endif %}
   {% if bot_guilds %}
   <form method="get" action="{{ url_for('access_control_page') }}#limits-{{ kind }}" style="margin-top:18px">
     <label class="muted" for="gl-guild-{{ kind }}">Server</label>
@@ -70,26 +73,26 @@
     </select>
   </form>
   <div class="server-row" style="margin-top:14px">
-    <div><div class="server-name">{{ title }}</div><div class="server-id">{{ 'Limits are being enforced.' if cfg.enabled else 'Off — no limits are enforced in this server.' }}</div></div>
-    <form method="post" action="{{ url_for('access_control_limits_toggle', kind=kind) }}" style="margin:0">
+    <div><div class="server-name">{{ title }}</div><div class="server-id">{% if cd %}{{ 'Custom cooldowns are active.' if cfg.enabled else 'Off — everyone uses the default 1 minute cooldown.' }}{% else %}{{ 'Limits are being enforced.' if cfg.enabled else 'Off — no limits are enforced in this server.' }}{% endif %}</div></div>
+    <form method="post" action="{{ url_for('access_control_cooldown_toggle') if cd else url_for('access_control_limits_toggle', kind=kind) }}" style="margin:0">
       <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
       <input type="hidden" name="enabled" value="{{ 0 if cfg.enabled else 1 }}">
       <button class="command-toggle {{ 'enabled' if cfg.enabled else 'disabled' }}" type="submit">{{ '✓ Enabled' if cfg.enabled else '✕ Disabled' }}</button>
     </form>
   </div>
-  <form method="post" action="{{ url_for('access_control_limits_save', kind=kind) }}" class="gl-form" data-kind="{{ kind }}" data-label="{{ amount_label }}" data-max="{{ 100000000 if kind == 'give' else 1000 }}">
+  <form method="post" action="{{ url_for('access_control_cooldown_save') if cd else url_for('access_control_limits_save', kind=kind) }}" class="gl-form" data-kind="{{ kind }}" data-mode="{{ 'cooldown' if cd else 'limit' }}" data-label="{{ amount_label }}" data-max="{{ 604800 if cd else 100000000 }}">
     <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
     <div class="gl-rows"></div>
-    <p class="muted gl-empty" style="margin-top:14px;display:none">No limits yet. Press <strong>+ Add limit</strong> to create one.</p>
+    <p class="muted gl-empty" style="margin-top:14px;display:none">{% if cd %}No custom cooldowns yet — everyone uses the default 1 minute. Press <strong>+ Add cooldown</strong> to create one.{% else %}No limits yet. Press <strong>+ Add limit</strong> to create one.{% endif %}</p>
     <div class="gl-actions">
-      <button type="button" class="command-toggle gl-add-btn gl-add">+ Add limit</button>
-      <button type="submit" class="command-toggle enabled">Save limits</button>
+      <button type="button" class="command-toggle gl-add-btn gl-add">+ Add {{ noun }}</button>
+      <button type="submit" class="command-toggle enabled">Save {{ noun }}s</button>
     </div>
     <script type="application/json" class="gl-saved">{{ cfg.rules_js|tojson }}</script>
   </form>
-  <div class="boost-note">{{ note|safe }} Edit or remove limits any time, then press <strong>Save limits</strong> — nothing changes until you save.</div>
+  <div class="boost-note">{{ note|safe }} Edit or remove {{ noun }}s any time, then press <strong>Save {{ noun }}s</strong> — nothing changes until you save.</div>
   {% else %}
-    <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so limits cannot be configured.</p>
+    <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so this cannot be configured.</p>
   {% endif %}
 </div>
 {% endmacro %}
@@ -225,9 +228,9 @@
         "Cap how much Candy members can give with <strong>/give</strong>. Each limit counts the total Candy a member has given in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow the gift.",
         "Candy limit", "Limits are measured in Candy, not number of gifts. Members who match no limit can give freely.") }}
 
-    {{ limit_card("trickortreat", "🎃", "Trick or Treat Limits",
-        "Control how often members can use <strong>/trickortreat</strong>. Each limit counts how many times a member has gone in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow another go.",
-        "Max uses", "While limits are enabled, a member who matches <strong>no</strong> limit still gets the default of one trick-or-treat per hour. When limits are disabled, everyone gets that default.") }}
+    {{ limit_card("trickortreat", "🎃", "Trick or Treat Cooldown",
+        "Set how long members must wait between <strong>/trickortreat</strong> uses. Everyone has a <strong>1 minute</strong> cooldown by default. Add cooldowns to change it for everyone or only for chosen roles — for example, a shorter wait for boosters.",
+        "Time", "If a member matches several cooldowns, the <strong>shortest</strong> one is used. A member who matches none (or when this is disabled) uses the default 1 minute.") }}
 
     <div class="access-card">
       <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
@@ -265,10 +268,12 @@
 
 <script type="application/json" id="gl-roles">{{ boost_roles|tojson }}</script>
 <script type="application/json" id="gl-periods">{{ give_limit_periods|tojson }}</script>
+<script type="application/json" id="gl-units">{{ cooldown_units|tojson }}</script>
 <script>
 (function () {
   const roles = JSON.parse(document.getElementById("gl-roles").textContent);
-  const periods = JSON.parse(document.getElementById("gl-periods").textContent);
+  const limitPeriods = JSON.parse(document.getElementById("gl-periods").textContent);
+  const cooldownUnits = JSON.parse(document.getElementById("gl-units").textContent);
   const maxRules = {{ give_limit_max_rules }};
 
   function el(tag, attrs, children) {
@@ -286,6 +291,8 @@
     const addBtn = form.querySelector(".gl-add-btn");
     const saved = JSON.parse(form.querySelector(".gl-saved").textContent);
     const label = form.dataset.label, max = form.dataset.max;
+    const cooldown = form.dataset.mode === "cooldown";
+    const periods = cooldown ? cooldownUnits : limitPeriods;
     let counter = 0;
 
     function refresh() {
@@ -297,14 +304,14 @@
 
     function addRow(rule) {
       const i = counter++;
-      rule = rule || { amount: "", period: "day", scope: "everyone", role_ids: [] };
+      rule = rule || { amount: "", period: cooldown ? "minutes" : "day", scope: "everyone", role_ids: [] };
       const row = el("div", { class: "gl-row" });
       row.appendChild(el("input", { type: "hidden", name: "rule", value: String(i) }));
 
       const amount = el("input", { type: "number", name: "amount_" + i, min: "1", max: max, step: "1", required: "", placeholder: label, class: "command-search", "aria-label": label });
       amount.value = rule.amount;
 
-      const period = el("select", { name: "period_" + i, class: "command-search", "aria-label": "Period" });
+      const period = el("select", { name: "period_" + i, class: "command-search", "aria-label": cooldown ? "Time unit" : "Period" });
       periods.forEach(([key, text]) => { const o = el("option", { value: key, text: text }); if (key === rule.period) o.selected = true; period.appendChild(o); });
 
       const scope = el("select", { name: "scope_" + i, class: "command-search", "aria-label": "Who it affects" });
@@ -331,7 +338,7 @@
       scope.addEventListener("change", syncScope);
       syncScope();
 
-      const remove = el("button", { type: "button", class: "gl-remove", text: "Remove", "aria-label": "Remove limit" });
+      const remove = el("button", { type: "button", class: "gl-remove", text: "Remove", "aria-label": "Remove" });
       remove.addEventListener("click", () => { row.remove(); refresh(); });
 
       [amount, period, scope, dd, remove].forEach((n) => row.appendChild(n));
