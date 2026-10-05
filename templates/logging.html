@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Logging</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261003') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
 <style>
 .section-main{padding:36px;max-width:1100px}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}
 .hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:18px}
@@ -44,7 +44,7 @@
 <input name="{{ prefix }}_webhook_url" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the current webhook' if current and current.type=='webhook' else 'https://discord.com/api/webhooks/…' }}">
 {% if current and current.type=='webhook' and masked_webhooks.get(prefix) %}<div class="secret">Current: {{ masked_webhooks[prefix] }}</div>{% endif %}</div>
 {% endmacro %}
-<main class="section-main"><a class="back" href="/dashboard">← Back to dashboard</a>
+<main class="section-main page-center"><a class="back" href="/dashboard">← Back to dashboard</a>
 <section class="hero"><div class="eyebrow">🎃 AUREOLIS • AUDIT TRAIL</div><h1>📋 Logging</h1><p>Activity history plus Discord log delivery, sent as clean Components&nbsp;V2 cards.</p></section>
 
 <section class="card"><h2>Delivery settings</h2><p class="muted">Pick a server, choose where logs go, and send a test to confirm it works.</p>
