@@ -40,3 +40,7 @@ body.guest-dashboard{display:block;min-height:100vh;overflow-x:hidden}
 @media(max-width:900px){.nav-label{display:none}.dashboard-nav a.nav-login{border:0}}
 
 .emoji-img{width:1.2em;height:1.2em;vertical-align:-.22em;object-fit:contain}
+
+/* Centers a page's main column in the space beside the sidebar (same effect as .wrap{margin:auto}).
+   width:100% + the page's own max-width = fills small screens, centers on wide ones. */
+.page-center{width:100%;margin-left:auto;margin-right:auto}
