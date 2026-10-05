@@ -53,6 +53,7 @@ activity_logs = db["activity_logs"]
 logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
+give_limits = db["give_limits"]
 shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
@@ -829,6 +830,120 @@ def calculate_daily_reward(base_reward, role_ids, guild_id):
 
 
 # =====================================================================
+#  /give LIMITS
+#  Per-server config: an on/off switch plus any number of rules. A rule is
+#  "members may give at most N Candy per hour/day/week", applied to everyone
+#  or only to members holding one of the chosen roles. Windows are rolling
+#  (the last 60 minutes / 24 hours / 7 days), measured from the activity log.
+#  If several rules apply to a member, every one of them must pass.
+# =====================================================================
+GIVE_LIMIT_PERIODS = {
+    "hour": ("Per hour", timedelta(hours=1)),
+    "day": ("Per day", timedelta(days=1)),
+    "week": ("Per week", timedelta(weeks=1)),
+}
+GIVE_LIMIT_MAX_RULES = 20
+GIVE_LIMIT_MAX_AMOUNT = 100000000
+
+
+def get_give_limits(guild_id):
+    record = give_limits.find_one({"guild_id": int(guild_id)}) or {}
+    rules = []
+    for rule in record.get("rules", []):
+        if rule.get("period") not in GIVE_LIMIT_PERIODS:
+            continue
+        rules.append({
+            "id": str(rule.get("id", "")),
+            "amount": int(rule.get("amount", 0)),
+            "period": rule["period"],
+            "scope": "roles" if rule.get("scope") == "roles" else "everyone",
+            "role_ids": [int(r) for r in rule.get("role_ids", [])],
+        })
+    return {"enabled": bool(record.get("enabled", False)), "rules": rules}
+
+
+def set_give_limits_enabled(guild_id, enabled, updated_by=None):
+    give_limits.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {"guild_id": int(guild_id), "enabled": bool(enabled),
+                  "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None}},
+        upsert=True,
+    )
+
+
+def set_give_limit_rules(guild_id, rules, valid_role_ids, updated_by=None):
+    """Replace the saved rules. Raises ValueError on anything invalid."""
+    if len(rules) > GIVE_LIMIT_MAX_RULES:
+        raise ValueError("Too many rules.")
+    valid_role_ids = {int(r) for r in valid_role_ids}
+    cleaned = []
+    for rule in rules:
+        amount = int(rule["amount"])
+        if amount < 1 or amount > GIVE_LIMIT_MAX_AMOUNT:
+            raise ValueError("Limit amount out of range.")
+        if rule["period"] not in GIVE_LIMIT_PERIODS:
+            raise ValueError("Unknown period.")
+        scope = rule["scope"]
+        if scope not in {"everyone", "roles"}:
+            raise ValueError("Unknown effect.")
+        role_ids = []
+        if scope == "roles":
+            role_ids = sorted({int(r) for r in rule.get("role_ids", [])})
+            if not role_ids or not set(role_ids) <= valid_role_ids:
+                raise ValueError("Pick at least one valid role.")
+        cleaned.append({"id": secrets.token_hex(4), "amount": amount, "period": rule["period"],
+                        "scope": scope, "role_ids": role_ids})
+    give_limits.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {"guild_id": int(guild_id), "rules": cleaned,
+                  "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None},
+         "$setOnInsert": {"enabled": False}},
+        upsert=True,
+    )
+    return cleaned
+
+
+def check_give_limits(guild_id, user_id, role_ids, amount):
+    """Check a pending /give against the server's limit rules.
+
+    Returns (blocked, statuses). `statuses` has one entry per rule that applies to this member, each with
+    limit / used / remaining / period / resets_at. `blocked` is the most restrictive failing entry, or None.
+    """
+    config = get_give_limits(guild_id)
+    if not config["enabled"] or not config["rules"]:
+        return None, []
+    role_ids = {int(r) for r in role_ids}
+    now = now_utc()
+    statuses = []
+    for rule in config["rules"]:
+        if rule["scope"] == "roles" and not role_ids.intersection(rule["role_ids"]):
+            continue
+        window = GIVE_LIMIT_PERIODS[rule["period"]][1]
+        entries = list(activity_logs.find(
+            {"action": "give", "guild_id": int(guild_id), "user_id": int(user_id), "created_at": {"$gte": now - window}},
+            {"amount": 1, "created_at": 1},
+        ).sort("created_at", 1))
+        used = sum(int(e.get("amount") or 0) for e in entries)
+        limit = rule["amount"]
+        status = {"limit": limit, "used": used, "remaining": max(0, limit - used), "period": rule["period"],
+                  "exceeds": used + amount > limit, "too_big": amount > limit, "resets_at": None}
+        if status["exceeds"] and not status["too_big"]:
+            need, freed = used + amount - limit, 0
+            for entry in entries:
+                freed += int(entry.get("amount") or 0)
+                if freed >= need:
+                    created = entry["created_at"]
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    status["resets_at"] = created + window
+                    break
+        statuses.append(status)
+    failing = [s for s in statuses if s["exceeds"]]
+    blocked = min(failing, key=lambda s: s["remaining"]) if failing else None
+    return blocked, statuses
+
+
+# =====================================================================
 #  LOGGING SYSTEM
 #  Events are queued, rendered once as a Components V2 "spec", then
 #  delivered to a channel (discord.ui.LayoutView) or a webhook (raw JSON
@@ -862,6 +977,7 @@ LOG_EVENTS = {
     "admin_subtract":      ("admin", "➖", "Candy Removed by Admin", -1),
     "daily_boost":         ("admin", "⚡", "Daily Boost Set", 0),
     "daily_boost_removed": ("admin", "⚡", "Daily Boost Removed", 0),
+    "give_limits":         ("admin", "🎁", "Give Limits Updated", 0),
     "economy_settings":    ("admin", "⚙️", "Economy Settings Changed", 0),
     "logging_test":        ("system", "🧪", "Logging Test", 0),
 }
@@ -870,7 +986,7 @@ DETAIL_LABELS = {
     "changed_by": "Changed by", "recipient_id": "Recipient", "boost_role": "Boost role",
     "role_id": "Role", "role_name": "Role name", "control": "Control", "level": "Level",
     "trick_or_treat_min": "Trick-or-treat min", "trick_or_treat_max": "Trick-or-treat max",
-    "daily_reward": "Daily reward",
+    "daily_reward": "Daily reward", "rule_count": "Rules",
 }
 DETAIL_HIDDEN = {"source_bot_id", "test", "recipient"}
 SOURCE_LABELS = {"web_users": "Web dashboard (Users)", "web_daily": "Web dashboard (Daily)"}
@@ -1705,6 +1821,9 @@ def access_control_page():
             key=lambda item: item["name"].lower(),
         )
     saved_daily_boosts = get_daily_boosts(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
+    give_limit_config = get_give_limits(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {"enabled": False, "rules": []}
+    # Discord IDs are bigger than JavaScript can hold exactly, so the page gets them as strings.
+    give_limit_rules_js = [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in give_limit_config["rules"]]
     return render_template(
         "access_control.html",
         user=user,
@@ -1716,6 +1835,10 @@ def access_control_page():
         boost_guild_id=selected_boost_guild_id,
         boost_roles=boost_roles,
         daily_boosts=saved_daily_boosts,
+        give_limit_config=give_limit_config,
+        give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
+        give_limit_max_rules=GIVE_LIMIT_MAX_RULES,
+        give_limit_rules_js=give_limit_rules_js,
     )
 
 
@@ -1785,6 +1908,59 @@ def access_control_daily_boost_remove():
     except (TypeError, ValueError):
         return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_boost"))
     return redirect(url_for("access_control_page", boost_guild=guild_id, saved="boost_removed"))
+
+
+@app.post("/access-control/give-limits/toggle")
+def access_control_give_limits_toggle():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        enabled = request.form.get("enabled") == "1"
+        bot = BOT.get("instance")
+        if not (bot and not bot.is_closed() and bot.get_guild(guild_id)):
+            raise ValueError
+        set_give_limits_enabled(guild_id, enabled, user["id"])
+        log_activity("give_limits", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"enabled": enabled, "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_give_limit") + "#give-limits")
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="give_limits") + "#give-limits")
+
+
+@app.post("/access-control/give-limits/save")
+def access_control_give_limits_save():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None:
+            raise ValueError
+        rules = []
+        for index in request.form.getlist("rule"):
+            if not index.isdigit():
+                raise ValueError
+            rules.append({
+                "amount": request.form.get(f"amount_{index}", ""),
+                "period": request.form.get(f"period_{index}", ""),
+                "scope": request.form.get(f"scope_{index}", ""),
+                "role_ids": request.form.getlist(f"roles_{index}"),
+            })
+        valid_roles = [role.id for role in guild.roles if not role.is_default()]
+        cleaned = set_give_limit_rules(guild_id, rules, valid_roles, user["id"])
+        log_activity("give_limits", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"rule_count": len(cleaned), "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=request.form.get("guild_id", ""), error="invalid_give_limit") + "#give-limits")
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="give_limits") + "#give-limits")
 
 
 @app.post("/access-control/command/<command_name>")
@@ -2226,6 +2402,90 @@ def candy_notice_view(title, text, ok=False):
     return view
 
 
+RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+GIVE_PERIOD_WORDS = {"hour": "hour", "day": "day", "week": "week"}
+
+
+def give_candy_view(giver, member, amount, limit_status=None):
+    """Components V2 card for /give."""
+    ui = discord.ui
+    head = (
+        "## 🤝 Candy Gift\n"
+        f"**From:** {giver.mention}\n"
+        f"**To:** {member.mention}\n"
+        f"**Amount:** {int(amount):,} 🍬"
+    )
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
+    if limit_status:
+        word = GIVE_PERIOD_WORDS[limit_status["period"]]
+        left = max(0, limit_status["limit"] - limit_status["used"] - int(amount))
+        items += [ui.Separator(), ui.TextDisplay(f"-# Give limit: {left:,} 🍬 left this {word}")]
+    items += [ui.Separator(), ui.TextDisplay(f"-# <t:{int(now_utc().timestamp())}:f>")]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
+def give_limit_blocked_view(status, amount):
+    """Private notice when /give is stopped by a limit rule."""
+    word = GIVE_PERIOD_WORDS[status["period"]]
+    if status["too_big"]:
+        text = (f"You can give at most **{status['limit']:,} 🍬** per {word}, "
+                f"so **{int(amount):,} 🍬** can never fit in one gift.")
+    else:
+        text = (f"You've given **{status['used']:,} / {status['limit']:,} 🍬** in the last {word}. "
+                f"You can give **{status['remaining']:,} 🍬** more right now.")
+        if status["resets_at"]:
+            text += f"\nEnough room frees up <t:{int(status['resets_at'].timestamp())}:R>."
+    return candy_notice_view("⏳ Give limit reached", text)
+
+
+def profile_candy_view(member, user, rank, next_daily=None):
+    """Components V2 card for /profile."""
+    ui = discord.ui
+    inventory = user.get("inventory", []) or []
+    head = (
+        f"## 🎃 {member.display_name}'s Profile\n"
+        f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
+        f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
+        f"**🎒 Items:** {len(inventory):,}"
+    )
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
+    if inventory:
+        shown = [f"{i.get('emoji', '🎃')} {i.get('name', 'Shop Item')}" for i in inventory[-8:][::-1]]
+        extra = len(inventory) - len(shown)
+        text = "**Latest items**\n" + "\n".join(shown) + (f"\n-# and {extra} more" if extra > 0 else "")
+        items += [ui.Separator(), ui.TextDisplay(text[:1000])]
+    if next_daily and next_daily > now_utc():
+        daily_text = f"⏰ Next daily reward <t:{int(next_daily.timestamp())}:R>"
+    else:
+        daily_text = "🎁 Your daily reward is ready — use **/daily**"
+    items += [ui.Separator(), ui.TextDisplay(daily_text)]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
+def leaderboard_candy_view(guild, rows, viewer, viewer_rank=None, viewer_balance=None):
+    """Components V2 card for /leaderboard. `rows` are user documents, best first."""
+    ui = discord.ui
+    lines = []
+    for index, row in enumerate(rows, start=1):
+        marker = RANK_MEDALS.get(index, f"**{index}.**")
+        lines.append(f"{marker} <@{row['user_id']}> — **{int(row['balance']):,} 🍬**")
+    head = f"## 🏆 Candy Leaderboard\n-# {guild.name}"
+    icon = guild.icon.url if guild.icon else None
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(icon)) if icon else ui.TextDisplay(head)]
+    items += [ui.Separator(), ui.TextDisplay("\n".join(lines)[:3500])]
+    footer = f"-# Top {len(rows)}"
+    if viewer_rank:
+        footer += f" • You: #{viewer_rank:,} with {int(viewer_balance):,} 🍬"
+    items += [ui.Separator(), ui.TextDisplay(footer)]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0xF97316))
+    return view
+
+
 def clean_reason(reason):
     reason = (reason or "").strip()
     return reason[:200] or None
@@ -2539,26 +2799,31 @@ class HalloweenBot(commands.Cog):
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
-    async def give(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    async def give(self, interaction: discord.Interaction, member: discord.Member,
+                   amount: app_commands.Range[int, 1, 100000000]):
+        notice = candy_notice_view
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("Server only", "This command can only be used in a server."), ephemeral=True)
             return
         if member.bot:
-            await interaction.response.send_message("🤖 You can't give Candy to a bot.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🤖 Not a person", "You can't give Candy to a bot."), ephemeral=True)
             return
         sender_controls = await db(get_member_controls, interaction.guild.id, interaction.user.id)
         recipient_controls = await db(get_member_controls, interaction.guild.id, member.id)
         if sender_controls["blocked_from_candy"]:
-            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server."), ephemeral=True)
             return
         if recipient_controls["blocked_from_candy"]:
-            await interaction.response.send_message("🚫 That member is not allowed to participate in Candy activities in this server.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🚫 Not allowed", "That member is not allowed to participate in Candy activities in this server."), ephemeral=True)
             return
         if member.id == interaction.user.id:
-            await interaction.response.send_message("🍬 You can't give Candy to yourself.", ephemeral=True)
+            await interaction.response.send_message(view=notice("🍬 Nice try", "You can't give Candy to yourself."), ephemeral=True)
             return
-        if amount <= 0:
-            await interaction.response.send_message("❌ The amount must be greater than 0.", ephemeral=True)
+        blocked, statuses = await db(
+            check_give_limits, interaction.guild.id, interaction.user.id,
+            [role.id for role in getattr(interaction.user, "roles", [])], int(amount))
+        if blocked:
+            await interaction.response.send_message(view=give_limit_blocked_view(blocked, amount), ephemeral=True)
             return
         sender = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         debited = await db(
@@ -2569,45 +2834,43 @@ class HalloweenBot(commands.Cog):
         )
         if not debited:
             await interaction.response.send_message(
-                f"❌ You don't have enough Candy. You currently have **{sender['balance']:,} 🍬**.",
-                ephemeral=True,
-            )
+                view=notice("❌ Not enough Candy", f"You currently have **{sender['balance']:,} 🍬**."), ephemeral=True)
             return
         await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         await db(add_candy, interaction.guild.id, member.id, amount)
         await db(log_activity, "give", interaction.user.id, interaction.user.name, interaction.guild.id, amount, {"recipient_id": member.id, "recipient": member.name})
+        tightest = min(statuses, key=lambda s: s["remaining"]) if statuses else None
         await interaction.response.send_message(
-            f"🍬 {interaction.user.mention} gave **{amount:,} Candy** to {member.mention}!"
-        )
+            view=give_candy_view(interaction.user, member, amount, tightest),
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
 
     @app_commands.command(name="leaderboard", description="Show the server Candy leaderboard.")
     async def leaderboard(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
-        top_users = await db(
-            lambda: list(
-                users.find({"guild_id": interaction.guild.id, "user_id": {"$nin": [
-                        record["user_id"] for record in member_controls.find(
-                            {"guild_id": interaction.guild.id, "leaderboard_excluded": True}, {"user_id": 1}
-                        )
-                    ]}}).sort("balance", -1).limit(10)
-            )
-        )
+        guild_id = interaction.guild.id
+
+        def load():
+            excluded = [r["user_id"] for r in member_controls.find(
+                {"guild_id": guild_id, "leaderboard_excluded": True}, {"user_id": 1})]
+            top = list(users.find({"guild_id": guild_id, "user_id": {"$nin": excluded}}).sort("balance", -1).limit(10))
+            viewer_rank = viewer_balance = None
+            if interaction.user.id not in excluded and not any(r["user_id"] == interaction.user.id for r in top):
+                mine = users.find_one({"guild_id": guild_id, "user_id": interaction.user.id})
+                if mine:
+                    viewer_balance = int(mine.get("balance", 0))
+                    viewer_rank = users.count_documents(
+                        {"guild_id": guild_id, "user_id": {"$nin": excluded}, "balance": {"$gt": viewer_balance}}) + 1
+            return top, viewer_rank, viewer_balance
+
+        top_users, viewer_rank, viewer_balance = await db(load)
         if not top_users:
-            await interaction.response.send_message("🍬 Nobody has earned Candy yet!")
+            await interaction.response.send_message(view=candy_notice_view("🍬 Candy Leaderboard", "Nobody has earned Candy yet!", ok=True))
             return
-        lines = []
-        for index, user in enumerate(top_users, start=1):
-            member = interaction.guild.get_member(user["user_id"])
-            mention = member.mention if member else f"<@{user['user_id']}>"
-            lines.append(f"**{index}.** {mention} — **{user['balance']:,} 🍬**")
-        embed = discord.Embed(
-            title="🍬 Candy Leaderboard",
-            description="\n".join(lines),
-            color=discord.Color.orange(),
-        )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            view=leaderboard_candy_view(interaction.guild, top_users, interaction.user, viewer_rank, viewer_balance),
+            allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="shop", description="Browse the Halloween Candy shop and buy items.")
     async def shop(self, interaction: discord.Interaction):
@@ -2664,17 +2927,20 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="profile", description="View your Candy profile.")
     async def profile(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
-        user = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
-        inventory = user.get("inventory", [])
-        embed = discord.Embed(
-            title=f"🎃 {interaction.user.display_name}'s Profile",
-            color=discord.Color.orange(),
-        )
-        embed.add_field(name="🍬 Candy", value=f"{user['balance']:,}", inline=True)
-        embed.add_field(name="🎒 Inventory", value=str(len(inventory)), inline=True)
-        await interaction.response.send_message(embed=embed)
+        guild_id = interaction.guild.id
+        user = await db(ensure_user, guild_id, interaction.user.id, interaction.user.name, interaction.user.display_name)
+        rank = await db(users.count_documents, {"guild_id": guild_id, "balance": {"$gt": int(user.get("balance", 0))}}) + 1
+        last_daily = user.get("last_daily")
+        next_daily = None
+        if last_daily:
+            if last_daily.tzinfo is None:
+                last_daily = last_daily.replace(tzinfo=timezone.utc)
+            next_daily = last_daily + timedelta(hours=24)
+        await interaction.response.send_message(
+            view=profile_candy_view(interaction.user, user, rank, next_daily),
+            allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup_bot(bot):
