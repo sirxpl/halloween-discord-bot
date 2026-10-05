@@ -60,6 +60,7 @@ role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
 arcane_level_rewards = db["arcane_level_rewards"]
 user_authorizations = db["user_authorizations"]
+oauth_transactions = db["oauth_transactions"]
 
 # Bump this whenever templates/terms.html or templates/privacy.html change in a way people
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
@@ -344,33 +345,58 @@ def events_page():
     return render_template("events.html")
 
 
+def _create_oauth_transaction(flow, consent=None):
+    """Persist OAuth state server-side so authorization survives session-cookie/proxy changes."""
+    state = secrets.token_urlsafe(32)
+    oauth_transactions.insert_one({
+        "_id": state,
+        "flow": flow,
+        "consent": consent or {},
+        "created_at": now_utc(),
+    })
+    return state
+
+
+def _consume_oauth_transaction(state):
+    if not state:
+        return None
+    return oauth_transactions.find_one_and_delete({"_id": state})
+
+
 @app.get("/login")
 def login():
     if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not OAUTH2_REDIRECT_URI:
         return "Discord OAuth2 is not configured on this deployment.", 503
-    state = secrets.token_urlsafe(32)
-    session["oauth_state"] = state
-    session["oauth_flow"] = "dashboard"
+    try:
+        state = _create_oauth_transaction("dashboard")
+    except PyMongoError:
+        log.exception("Could not create Discord OAuth transaction")
+        return "Discord OAuth2 is temporarily unavailable. Please try again.", 503
     params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI, "response_type": "code", "scope": "identify guilds", "state": state}
     return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
 
 
 @app.get("/oauth/callback")
 def oauth_callback():
-    flow = session.pop("oauth_flow", "dashboard")
+    state = request.args.get("state")
+    try:
+        transaction = _consume_oauth_transaction(state)
+    except PyMongoError:
+        log.exception("Could not read Discord OAuth transaction")
+        return "Discord OAuth2 is temporarily unavailable. Please try again.", 503
+    if not transaction:
+        if request.args.get("error"):
+            return redirect(url_for("authorize_page", error="denied"))
+        return "This Discord authorization request has expired or is invalid. Please start again.", 400
+    flow = transaction.get("flow", "dashboard")
+    consent = transaction.get("consent") or {}
     if request.args.get("error"):
         if flow == "authorize":
-            session.pop("oauth_state", None)
-            session.pop("consent", None)
             return redirect(url_for("authorize_page", error="denied"))
         return redirect(url_for("profile_page"))
-    state = request.args.get("state")
-    expected = session.pop("oauth_state", None)
-    if not state or not expected or not secrets.compare_digest(state, expected):
-        return "Invalid OAuth2 state.", 400
     code = request.args.get("code")
     if not code:
-        return "Missing OAuth2 authorization code.", 400
+        return "Missing Discord OAuth2 authorization code.", 400
     token = requests.post("https://discord.com/api/oauth2/token", data={"client_id": DISCORD_CLIENT_ID, "client_secret": DISCORD_CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": OAUTH2_REDIRECT_URI}, timeout=10)
     if not token.ok:
         log.error("Discord OAuth2 token exchange failed: %s %s", token.status_code, token.text[:300])
@@ -380,16 +406,13 @@ def oauth_callback():
         return "Discord OAuth2 did not return an access token.", 502
     headers = {"Authorization": f"Bearer {access_token}"}
     if flow == "authorize":
-        return finish_bot_authorization(headers)
+        return finish_bot_authorization(headers, consent=consent)
     me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
     guild_response = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=10)
     if not me_response.ok or not guild_response.ok:
         return "Discord account information could not be loaded.", 502
     me = me_response.json()
     guilds = guild_response.json()
-
-    # Keep the Flask session small enough for a browser cookie. Discord returns
-    # many extra fields for guilds that the dashboard does not need.
     compact_guilds = [
         {
             "id": str(guild.get("id")),
@@ -399,11 +422,6 @@ def oauth_callback():
         for guild in guilds
         if guild.get("id")
     ]
-
-    # Make the login session persistent and store only the data the dashboard
-    # actually needs. This prevents large Discord guild payloads from causing
-    # the session cookie to be dropped, which can make a successful login look
-    # like the user is still signed out.
     session.permanent = True
     session["discord_user"] = me
     session["discord_guilds"] = compact_guilds
@@ -411,9 +429,7 @@ def oauth_callback():
         session["selected_guild_id"] = compact_guilds[0]["id"]
     else:
         session.pop("selected_guild_id", None)
-
     return redirect(url_for("profile_page"))
-
 
 def _csrf_token():
     token = session.get("csrf_token")
@@ -445,14 +461,15 @@ def authorize_submit():
     if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not OAUTH2_REDIRECT_URI:
         return redirect(url_for("authorize_page", error="config"))
 
-    state = secrets.token_urlsafe(32)
-    session["oauth_state"] = state
-    session["oauth_flow"] = "authorize"
-    # Remember exactly which version of the terms they ticked the box for.
-    session["consent"] = {"tos_version": TOS_VERSION, "dms_enabled": True}
-    # Only `identify`: we need to know who authorized, nothing else.
+    consent = {"tos_version": TOS_VERSION, "dms_enabled": True}
+    try:
+        state = _create_oauth_transaction("authorize", consent=consent)
+    except PyMongoError:
+        log.exception("Could not create authorization OAuth transaction")
+        return redirect(url_for("authorize_page", error="unavailable"))
     params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI, "response_type": "code", "scope": "identify", "state": state}
     return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
+
 
 
 def send_authorization_dm(user_id):
@@ -473,8 +490,8 @@ def send_authorization_dm(user_id):
         return False
 
 
-def finish_bot_authorization(headers):
-    consent = session.pop("consent", None) or {}
+def finish_bot_authorization(headers, consent=None):
+    consent = consent or {}
     if not consent.get("dms_enabled") or consent.get("tos_version") != TOS_VERSION:
         return redirect(url_for("authorize_page", error="expired"))
     me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
