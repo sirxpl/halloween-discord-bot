@@ -59,6 +59,11 @@ shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
 arcane_level_rewards = db["arcane_level_rewards"]
+user_authorizations = db["user_authorizations"]
+
+# Bump this whenever templates/terms.html or templates/privacy.html change in a way people
+# should re-accept. Everyone whose stored version differs is asked to authorize again.
+TOS_VERSION = "2026-10-04"
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299}
 
@@ -80,7 +85,7 @@ Session(app)
 def require_web_login_screen():
     if request.method not in {"GET", "HEAD"}:
         return None
-    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page"}
+    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page", "authorize_page", "authorized_page"}
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
@@ -345,13 +350,19 @@ def login():
         return "Discord OAuth2 is not configured on this deployment.", 503
     state = secrets.token_urlsafe(32)
     session["oauth_state"] = state
+    session["oauth_flow"] = "dashboard"
     params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI, "response_type": "code", "scope": "identify guilds", "state": state}
     return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
 
 
 @app.get("/oauth/callback")
 def oauth_callback():
+    flow = session.pop("oauth_flow", "dashboard")
     if request.args.get("error"):
+        if flow == "authorize":
+            session.pop("oauth_state", None)
+            session.pop("consent", None)
+            return redirect(url_for("authorize_page", error="denied"))
         return redirect(url_for("profile_page"))
     state = request.args.get("state")
     expected = session.pop("oauth_state", None)
@@ -368,6 +379,8 @@ def oauth_callback():
     if not access_token:
         return "Discord OAuth2 did not return an access token.", 502
     headers = {"Authorization": f"Bearer {access_token}"}
+    if flow == "authorize":
+        return finish_bot_authorization(headers)
     me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
     guild_response = requests.get("https://discord.com/api/users/@me/guilds", headers=headers, timeout=10)
     if not me_response.ok or not guild_response.ok:
@@ -400,6 +413,100 @@ def oauth_callback():
         session.pop("selected_guild_id", None)
 
     return redirect(url_for("profile_page"))
+
+
+def _csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+@app.get("/authorize")
+def authorize_page():
+    """First-use consent screen: accept Terms + Privacy and enable DMs, then sign in with Discord."""
+    return render_template(
+        "authorize.html",
+        csrf_token=_csrf_token(),
+        error=request.args.get("error"),
+        configured=bool(DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET and OAUTH2_REDIRECT_URI),
+    )
+
+
+@app.post("/authorize")
+def authorize_submit():
+    sent = request.form.get("csrf_token", "")
+    expected = session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("authorize_page", error="expired"))
+    if request.form.get("agree_terms") != "on" or request.form.get("enable_dms") != "on":
+        return redirect(url_for("authorize_page", error="consent"))
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not OAUTH2_REDIRECT_URI:
+        return redirect(url_for("authorize_page", error="config"))
+
+    state = secrets.token_urlsafe(32)
+    session["oauth_state"] = state
+    session["oauth_flow"] = "authorize"
+    # Remember exactly which version of the terms they ticked the box for.
+    session["consent"] = {"tos_version": TOS_VERSION, "dms_enabled": True}
+    # Only `identify`: we need to know who authorized, nothing else.
+    params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI, "response_type": "code", "scope": "identify", "state": state}
+    return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
+
+
+def send_authorization_dm(user_id):
+    """Best-effort welcome DM that proves DMs work. Runs the send on the bot's event loop."""
+    bot_ = BOT.get("instance")
+    if bot_ is None or not bot_.is_ready():
+        return False
+
+    async def _send():
+        user = bot_.get_user(int(user_id)) or await bot_.fetch_user(int(user_id))
+        await user.send(view=authorized_dm_view())
+
+    try:
+        _run_on_bot_loop(bot_, _send(), 10)
+        return True
+    except Exception as exc:
+        log.info("Authorization DM to %s was not delivered: %s", user_id, exc.__class__.__name__)
+        return False
+
+
+def finish_bot_authorization(headers):
+    consent = session.pop("consent", None) or {}
+    if not consent.get("dms_enabled") or consent.get("tos_version") != TOS_VERSION:
+        return redirect(url_for("authorize_page", error="expired"))
+    me_response = requests.get("https://discord.com/api/users/@me", headers=headers, timeout=10)
+    if not me_response.ok:
+        return "Discord account information could not be loaded.", 502
+    me = me_response.json()
+    if not me.get("id"):
+        return "Discord did not return your account.", 502
+    username = me.get("global_name") or me.get("username") or str(me["id"])
+    try:
+        record_user_authorization(me["id"], me.get("username") or username)
+    except PyMongoError:
+        log.exception("Could not save authorization for %s", me.get("id"))
+        return "We could not save your authorization right now. Please try again in a moment.", 503
+    dm_ok = send_authorization_dm(me["id"])
+    try:
+        user_authorizations.update_one(
+            {"_id": int(me["id"])},
+            {"$set": {"dm_delivered": dm_ok, "dm_checked_at": now_utc()}},
+        )
+    except PyMongoError:
+        log.warning("Could not record DM delivery result for %s", me.get("id"))
+    session["authorized_result"] = {"username": username, "dm_ok": dm_ok}
+    return redirect(url_for("authorized_page"))
+
+
+@app.get("/authorize/done")
+def authorized_page():
+    result = session.get("authorized_result")
+    if not result:
+        return redirect(url_for("authorize_page"))
+    return render_template("authorized.html", username=result.get("username"), dm_ok=result.get("dm_ok"))
 
 
 @app.get("/logout")
@@ -755,6 +862,48 @@ def is_admin(user_id):
 def is_command_enabled(command_name):
     record = command_access.find_one({"command_name": command_name})
     return record is None or record.get("enabled", True)
+
+
+def user_authorization_status(user_id):
+    """'ok' = authorized with Discord, accepted the current Terms/Privacy version and enabled DMs.
+    'outdated' = accepted an older version. 'missing' = never authorized."""
+    record = user_authorizations.find_one({"_id": int(user_id)})
+    if not record or not record.get("dms_enabled"):
+        return "missing"
+    if record.get("tos_version") != TOS_VERSION:
+        return "outdated"
+    return "ok"
+
+
+def record_user_authorization(user_id, username):
+    now = now_utc()
+    user_authorizations.update_one(
+        {"_id": int(user_id)},
+        {
+            "$set": {
+                "username": username,
+                "tos_version": TOS_VERSION,
+                "terms_accepted_at": now,
+                "privacy_accepted_at": now,
+                "dms_enabled": True,
+                "authorized_at": now,
+            },
+            "$setOnInsert": {"first_authorized_at": now},
+        },
+        upsert=True,
+    )
+
+
+def public_base_url():
+    """Base URL of the web app, used for the authorize link. PUBLIC_BASE_URL wins; otherwise it is
+    derived from OAUTH2_REDIRECT_URI so no extra config is needed."""
+    explicit = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    parsed = urlparse(OAUTH2_REDIRECT_URI or "")
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return None
 
 
 
@@ -2631,6 +2780,49 @@ async def dm_candy_change(target, kind, server_name, amount, new_balance, admin_
         return False
 
 
+def authorization_required_view(status, url):
+    """Ephemeral card shown the first time someone uses a slash command."""
+    ui = discord.ui
+    if status == "outdated":
+        head = (
+            "## 🎃 We updated our terms\n"
+            "Please review and accept the updated **Terms of Service** and **Privacy Policy** to keep using Aureolis."
+        )
+    else:
+        head = (
+            "## 🎃 Authorize to continue\n"
+            "Before you can use Aureolis commands, you need to:\n"
+            "• Authorize with Discord\n"
+            "• Agree to the **Terms of Service** and **Privacy Policy**\n"
+            "• Enable **DMs** so the bot can message you"
+        )
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(
+        ui.TextDisplay(head),
+        ui.Separator(),
+        ui.ActionRow(ui.Button(label="Authorize with Discord", url=url)),
+        ui.TextDisplay("-# It takes about 30 seconds. Run your command again once you're done."),
+        accent_colour=0xF97316,
+    ))
+    return view
+
+
+def authorized_dm_view():
+    """Welcome DM sent right after authorizing. Proves DMs work."""
+    ui = discord.ui
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(
+        ui.TextDisplay(
+            "## ✅ You're authorized\n"
+            "Thanks for agreeing to the Terms of Service and Privacy Policy. DMs are on, so I can "
+            "message you here, for example when an admin adds or removes Candy from your balance.\n"
+            "Head back to the server and run your command again. 🍬"
+        ),
+        accent_colour=0x22C55E,
+    ))
+    return view
+
+
 def candy_notice_view(title, text, ok=False):
     """Small Components V2 notice for errors and denials."""
     ui = discord.ui
@@ -2777,11 +2969,37 @@ class AccessControlledTree(app_commands.CommandTree):
         if command is None:
             return True
 
-        if await db(is_command_enabled, command.name):
+        if not await db(is_command_enabled, command.name):
+            await interaction.response.send_message(
+                f"🚫 **/{command.name}** is currently disabled by the bot administrator.",
+                ephemeral=True,
+            )
+            return False
+
+        # First-use gate: every slash command needs a Discord authorization, an accepted
+        # Terms/Privacy version, and DMs enabled. Fails closed if it can't be verified.
+        try:
+            status = await db(user_authorization_status, interaction.user.id)
+        except PyMongoError:
+            log.exception("Could not check authorization for %s", interaction.user.id)
+            await interaction.response.send_message(
+                "🎃 I can't verify your authorization right now. Please try again in a moment.",
+                ephemeral=True,
+            )
+            return False
+        if status == "ok":
             return True
 
+        base = public_base_url()
+        if not base:
+            log.error("Authorization is required but OAUTH2_REDIRECT_URI/PUBLIC_BASE_URL is not configured.")
+            await interaction.response.send_message(
+                "🎃 Authorization isn't set up yet. Please let a server admin know.",
+                ephemeral=True,
+            )
+            return False
         await interaction.response.send_message(
-            f"🚫 **/{command.name}** is currently disabled by the bot administrator.",
+            view=authorization_required_view(status, f"{base}/authorize"),
             ephemeral=True,
         )
         return False
