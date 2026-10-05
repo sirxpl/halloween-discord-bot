@@ -1826,6 +1826,26 @@ def users_page():
     )
 
 
+def notify_candy_change_from_web(guild_id, member_id, kind, amount, new_balance, admin):
+    """DM the member after a dashboard Candy change. Best effort: it never breaks the save."""
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return
+    guild = bot.get_guild(int(guild_id))
+
+    async def send():
+        target = bot.get_user(int(member_id)) or await bot.fetch_user(int(member_id))
+        return await dm_candy_change(
+            target, kind, guild.name if guild else "the server", amount, new_balance, admin["id"],
+            admin.get("global_name") or admin.get("username") or "An admin", discord_avatar_url(admin))
+
+    try:
+        if _run_on_bot_loop(bot, send(), 10) is False:
+            log.info("Could not DM member %s about a dashboard Candy change (DMs closed or blocked).", member_id)
+    except Exception:
+        log.warning("Dashboard Candy change DM failed for member %s.", member_id, exc_info=True)
+
+
 @app.post("/users/candy")
 def users_candy():
     user = session.get("discord_user")
@@ -1856,6 +1876,7 @@ def users_candy():
         log_activity("admin_add" if action == "add" else "admin_subtract",
                      user_id=member_id, guild_id=guild_id, amount=amount,
                      details={"changed_by": user["id"], "source": "web_users"})
+        notify_candy_change_from_web(guild_id, member_id, action, amount, result["balance"], user)
         return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
     except (TypeError, ValueError):
         return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
@@ -2575,6 +2596,41 @@ def admin_candy_view(kind, member, amount, new_balance, admin, reason=None):
     return view
 
 
+def candy_dm_view(kind, server_name, amount, new_balance, admin_name, admin_avatar=None, reason=None):
+    """Components V2 card DMed to a member whose Candy was changed by an admin. kind is 'add' or 'subtract'."""
+    adding = kind == "add"
+    ui = discord.ui
+    head = (
+        f"## {'➕ You received Candy' if adding else '➖ Candy was taken'}\n"
+        f"**Server:** {server_name}\n"
+        f"**Amount:** {'+' if adding else '−'}{int(amount):,} 🍬\n"
+        f"**New balance:** {int(new_balance):,} 🍬\n"
+        f"**By:** {admin_name}"
+    )
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(admin_avatar)) if admin_avatar else ui.TextDisplay(head)]
+    if reason:
+        items += [ui.Separator(), ui.TextDisplay(f"**Reason**\n> {reason}"[:1000])]
+    items += [ui.Separator(), ui.TextDisplay(f"-# <t:{int(now_utc().timestamp())}:f>")]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0x22C55E if adding else 0xEF4444))
+    return view
+
+
+async def dm_candy_change(target, kind, server_name, amount, new_balance, admin_id, admin_name, admin_avatar=None, reason=None):
+    """Best-effort DM telling a member their Candy was added/subtracted by an admin.
+
+    Returns None if there was nothing to send (a bot, or an admin changing their own balance),
+    True if the DM was delivered, False if Discord refused it (DMs closed, blocked, etc.).
+    """
+    if getattr(target, "bot", False) or int(target.id) == int(admin_id):
+        return None
+    try:
+        await target.send(view=candy_dm_view(kind, server_name, amount, new_balance, admin_name, admin_avatar, reason))
+        return True
+    except discord.HTTPException:
+        return False
+
+
 def candy_notice_view(title, text, ok=False):
     """Small Components V2 notice for errors and denials."""
     ui = discord.ui
@@ -2982,6 +3038,13 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(
             view=admin_candy_view("add", member, amount, updated["balance"], interaction.user, reason),
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
+        dm_ok = await dm_candy_change(member, "add", interaction.guild.name, amount, updated["balance"],
+                                      interaction.user.id, interaction.user.display_name, interaction.user.display_avatar.url, reason)
+        if dm_ok is False:
+            await interaction.followup.send(
+                view=candy_notice_view("📪 Couldn't send a DM",
+                                       f"{member.mention} has DMs closed or has blocked the bot, so they weren't notified. The Candy change itself went through."),
+                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="subtract", description="Admin: subtract Candy from a member's balance.")
     @app_commands.describe(member="Member losing Candy.", amount="Amount of Candy to subtract.",
@@ -3012,6 +3075,13 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(
             view=admin_candy_view("subtract", member, amount, updated["balance"], interaction.user, reason),
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
+        dm_ok = await dm_candy_change(member, "subtract", interaction.guild.name, amount, updated["balance"],
+                                      interaction.user.id, interaction.user.display_name, interaction.user.display_avatar.url, reason)
+        if dm_ok is False:
+            await interaction.followup.send(
+                view=candy_notice_view("📪 Couldn't send a DM",
+                                       f"{member.mention} has DMs closed or has blocked the bot, so they weren't notified. The Candy change itself went through."),
+                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
