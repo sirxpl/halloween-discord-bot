@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 import aiohttp
 import discord
 from jinja2 import ChoiceLoader, FunctionLoader
+from markupsafe import Markup, escape
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask, jsonify, render_template, request, redirect, session, url_for
@@ -183,7 +184,10 @@ def shop_page():
     guild_id = int(guild["id"]) if guild else -1
     migrate_legacy_shop_items(guild_id)
     items = list(shop_items.find({"guild_id": guild_id, "enabled": True}).sort("price", 1))
-    return render_template("shop.html", items=items, guild=guild)
+    result = request.args.get("role_result")
+    purchase_message = SHOP_RESULT_MESSAGES.get(result) if result else None
+    return render_template("shop.html", items=items, guild=guild, purchase_message=purchase_message,
+                           purchase_ok=(result == "success"), requirement_mode=item_requirement_mode)
 
 
 @app.get("/shop-panel")
@@ -200,13 +204,37 @@ def shop_panel_page():
     gid = str(guild.id) if guild else ""
     if gid:
         session["shop_panel_guild_id"] = gid
-    roles = sorted([{"id": str(r.id), "name": r.name, "position": r.position}
+    roles = sorted([{"id": str(r.id), "name": r.name, "position": r.position,
+                     "color": f"#{r.color.value:06x}" if r.color.value else "#99aab5",
+                     "assignable": bot_can_assign(guild, r)[0]}
                     for r in guild.roles if not r.is_default() and not r.managed],
                    key=lambda x: (-x["position"], x["name"].lower())) if guild else []
+    emojis = [{"value": f"<{'a' if e.animated else ''}:{e.name}:{e.id}>", "name": e.name, "url": str(e.url)}
+              for e in guild.emojis if e.available] if guild else []
     migrate_legacy_shop_items(int(gid) if gid else -1)
     listings = list(shop_items.find({"guild_id": int(gid) if gid else -1}).sort("price", 1))
+    assignable = {r["id"]: r["assignable"] for r in roles}
+    for listing in listings:
+        listing["mode"] = item_requirement_mode(listing)
+        rid = str(listing.get("reward", {}).get("role_id", ""))
+        listing["cannot_assign"] = listing.get("type") == "role" and assignable.get(rid, False) is False
+    errors = {
+        "invalid": "That item configuration is not valid. Check the name and price.",
+        "role_required": "Pick the Discord role this item should give.",
+        "role_unassignable": "That role cannot be given by the bot. Choose a normal role (not @everyone or a bot-managed role).",
+        "role_above_bot": "The bot cannot give that role yet. In Server Settings → Roles, give the bot Manage Roles and drag the bot's role ABOVE the reward role, then try again.",
+        "requirements_empty": "Pick at least one required role, or set “Who can buy this?” to Everyone.",
+        "emoji_invalid": "That emoji is not valid. Use a normal emoji, or pick one of the server's custom emojis.",
+    }
     return render_template("shop_panel.html", user=user, avatar_url=discord_avatar_url(user),
-                           bot_guilds=guilds, guild_id=gid, roles=roles, listings=listings)
+                           bot_guilds=guilds, guild_id=gid, roles=roles, listings=listings, emojis=emojis,
+                           error_message=errors.get(request.args.get("error")))
+
+
+class ShopConfigError(ValueError):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 @app.post("/shop-panel/save")
@@ -214,28 +242,39 @@ def shop_panel_save():
     user = session.get("discord_user")
     if not user or not is_admin(user["id"]):
         return "Forbidden", 403
+    gid = request.form.get("guild_id", "")
     try:
         gid = int(request.form["guild_id"])
         name = request.form["name"].strip()
         description = request.form.get("description", "").strip()
-        emoji = request.form.get("emoji", "🎃").strip() or "🎃"
+        try:
+            emoji = normalize_item_emoji(request.form.get("emoji", ""))
+        except ValueError:
+            raise ShopConfigError("emoji_invalid")
         item_type = request.form.get("item_type", "custom").strip().lower()
         price = int(request.form["price"])
         enabled = request.form.get("enabled") == "on"
+        requirement_mode = request.form.get("requirement_mode", "everyone").lower()
         required_role_ids = [int(x) for x in request.form.getlist("required_role_ids") if str(x).isdigit()]
-        requirement_mode = request.form.get("requirement_mode", "any").lower()
         role_id_raw = request.form.get("role_id", "").strip()
         role_id = int(role_id_raw) if role_id_raw.isdigit() else None
-        if not name or price < 1 or item_type not in {"role", "custom"} or requirement_mode not in {"any", "all"}:
-            raise ValueError
+        if not name or price < 1 or item_type not in {"role", "custom"} or requirement_mode not in REQUIREMENT_MODES:
+            raise ShopConfigError("invalid")
+        if requirement_mode == "everyone":
+            required_role_ids = []
+        elif not required_role_ids:
+            raise ShopConfigError("requirements_empty")
         bot = BOT.get("instance")
         guild = bot.get_guild(gid) if bot and not bot.is_closed() else None
         if guild is None:
-            raise ValueError
+            raise ShopConfigError("invalid")
         if item_type == "role":
             role = guild.get_role(role_id) if role_id else None
-            if not role or role.is_default() or role.managed:
-                raise ValueError
+            if role is None:
+                raise ShopConfigError("role_required")
+            ok, reason = bot_can_assign(guild, role)
+            if not ok:
+                raise ShopConfigError("role_above_bot" if reason in {"role_above_bot", "missing_manage_roles"} else "role_unassignable")
             reward = {"role_id": role.id, "role_name": role.name}
         else:
             reward = {}
@@ -246,8 +285,10 @@ def shop_panel_save():
             "type": item_type, "enabled": enabled, "required_role_ids": required_role_ids,
             "requirement_mode": requirement_mode, "reward": reward,
             "created_at": now, "updated_at": now, "updated_by": int(user["id"])})
+    except ShopConfigError as exc:
+        return redirect(url_for("shop_panel_page", guild=gid, error=exc.code))
     except (KeyError, TypeError, ValueError):
-        return redirect(url_for("shop_panel_page", error="invalid"))
+        return redirect(url_for("shop_panel_page", guild=gid, error="invalid"))
     return redirect(url_for("shop_panel_page", guild=gid, saved="1"))
 
 
@@ -435,19 +476,132 @@ def get_shop_items_for_guild(guild_id, enabled_only=True):
     return list(shop_items.find(query).sort("price", 1))
 
 
+CUSTOM_EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]{2,32}):(\d{15,25})>$")
+REQUIREMENT_MODES = {"everyone", "any", "all"}
+
+
+def normalize_item_emoji(raw):
+    """Accepts a unicode emoji or a Discord custom emoji like <:name:123> / <a:name:123>."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "🎃"
+    if CUSTOM_EMOJI_RE.match(raw):
+        return raw
+    if len(raw) <= 16 and not any(ch in raw for ch in "<>:@#"):
+        return raw
+    raise ValueError("invalid emoji")
+
+
+def emoji_html(value):
+    """Jinja filter: custom Discord emoji become an <img>, unicode emoji are escaped text."""
+    value = (value or "🎃").strip()
+    match = CUSTOM_EMOJI_RE.match(value)
+    if match:
+        animated, name, eid = match.groups()
+        ext = "gif" if animated else "webp"
+        return Markup(f'<img class="emoji-img" src="https://cdn.discordapp.com/emojis/{eid}.{ext}?size=64" alt=":{escape(name)}:" title=":{escape(name)}:" loading="lazy">')
+    return escape(value)
+
+
+def emoji_plain(value):
+    """Unicode-only version for places that cannot render custom emoji (autocomplete labels, etc.)."""
+    value = (value or "🎃").strip()
+    return "" if CUSTOM_EMOJI_RE.match(value) else value
+
+
+def emoji_for_button(value):
+    try:
+        return discord.PartialEmoji.from_str((value or "🎃").strip())
+    except Exception:
+        return None
+
+
+app.jinja_env.filters["emoji"] = emoji_html
+
+
+def item_requirement_mode(item):
+    mode = str(item.get("requirement_mode", "any")).lower()
+    if mode not in REQUIREMENT_MODES:
+        mode = "any"
+    required = [rid for rid in item.get("required_role_ids", []) if str(rid).isdigit()]
+    return "everyone" if mode == "everyone" or not required else mode
+
+
 def member_meets_shop_requirements(member, item):
+    mode = item_requirement_mode(item)
+    if mode == "everyone":
+        return True
     required = {int(role_id) for role_id in item.get("required_role_ids", []) if str(role_id).isdigit()}
-    if not required: return True
     owned = {role.id for role in getattr(member, "roles", [])}
-    return required.issubset(owned) if str(item.get("requirement_mode", "any")).lower() == "all" else bool(required & owned)
+    return required.issubset(owned) if mode == "all" else bool(required & owned)
 
 
 def shop_requirement_text(guild, item):
+    if item_requirement_mode(item) == "everyone":
+        return "Everyone can buy"
     roles = [guild.get_role(int(rid)) for rid in item.get("required_role_ids", []) if str(rid).isdigit()]
     roles = [role for role in roles if role]
-    if not roles: return "No role requirement"
-    joiner = " AND " if str(item.get("requirement_mode", "any")).lower() == "all" else " OR "
+    if not roles:
+        return "Everyone can buy"
+    joiner = " AND " if item_requirement_mode(item) == "all" else " OR "
     return "Requires " + joiner.join(role.mention for role in roles)
+
+
+SHOP_RESULT_MESSAGES = {
+    "success": "Purchase complete.",
+    "unavailable": "That shop item is no longer available.",
+    "offline": "The bot is currently offline from this server.",
+    "member_missing": "I could not find you as a server member.",
+    "requirements": "You do not meet this item's role requirements.",
+    "owned": "You already have that role.",
+    "permissions": "I can't give that role right now. A server admin needs to give the bot the Manage Roles permission and move the bot's role above the reward role. You were not charged.",
+    "not_enough": "You do not have enough Candy.",
+    "assignment_failed": "Discord would not apply the role, so you were not charged. Please try again.",
+    "purchase_failed": "The purchase could not be completed.",
+}
+
+
+def _run_on_bot_loop(bot, coro, timeout):
+    return asyncio.run_coroutine_threadsafe(coro, bot.loop).result(timeout=timeout)
+
+
+def get_fresh_member(guild_id, user_id):
+    """Always ask Discord for the member's current roles. The cache can be stale because the bot
+    does not run with the privileged Server Members intent."""
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return None
+    guild = bot.get_guild(int(guild_id))
+    if guild is None:
+        return None
+    try:
+        return _run_on_bot_loop(bot, guild.fetch_member(int(user_id)), 8)
+    except discord.NotFound:
+        return None
+    except Exception:
+        log.exception("Could not fetch a fresh member %s in guild %s; using cache", user_id, guild_id)
+        return guild.get_member(int(user_id))
+
+
+def bot_can_assign(guild, role):
+    """(ok, reason). Used both at save time and at purchase time."""
+    bot = BOT.get("instance")
+    me = guild.me or (guild.get_member(bot.user.id) if bot and bot.user else None)
+    if role is None or role.is_default() or role.managed:
+        return False, "unassignable"
+    if me is None:
+        return True, None  # cannot tell; let Discord decide
+    if not me.guild_permissions.manage_roles:
+        return False, "missing_manage_roles"
+    if role >= me.top_role:
+        return False, "role_above_bot"
+    return True, None
+
+
+def _refund_purchase(guild_id, user_id, price, item_id, purchased_at):
+    users.update_one({"guild_id": int(guild_id), "user_id": int(user_id)},
+                     {"$inc": {"balance": price},
+                      "$pull": {"inventory": {"item_id": item_id, "purchased_at": purchased_at}}})
 
 
 def purchase_shop_item(guild_id, user_id, item_id):
@@ -456,7 +610,7 @@ def purchase_shop_item(guild_id, user_id, item_id):
     bot = BOT.get("instance")
     guild = bot.get_guild(int(guild_id)) if bot and not bot.is_closed() else None
     if not guild: return "offline"
-    member = get_bot_member(guild_id, user_id)
+    member = get_fresh_member(guild_id, user_id)
     if member is None: return "member_missing"
     if not member_meets_shop_requirements(member, item): return "requirements"
     price = int(item.get("price", 0))
@@ -466,70 +620,71 @@ def purchase_shop_item(guild_id, user_id, item_id):
     if str(item.get("type", "custom")).lower() == "role":
         role_id = item.get("reward", {}).get("role_id")
         role = guild.get_role(int(role_id)) if role_id else None
-        if not role or role.managed or role.is_default(): return "unavailable"
+        if role is None: return "unavailable"
         if role in member.roles: return "owned"
-        me = guild.me
-        if me is None or not me.guild_permissions.manage_roles or role >= me.top_role: return "permissions"
+        ok, reason = bot_can_assign(guild, role)
+        if not ok:
+            log.warning("Shop role %s (%s) cannot be assigned in guild %s: %s", role.id, role.name, guild_id, reason)
+            return "unavailable" if reason == "unassignable" else "permissions"
 
+    purchased_at = now_utc()
     inventory_entry = {"item_id": item["item_id"], "name": item.get("name", "Shop Item"),
-                       "description": item.get("description", ""), "price": price,
-                       "type": item.get("type", "custom"), "purchased_at": now_utc()}
+                       "emoji": item.get("emoji", "🎃"), "description": item.get("description", ""),
+                       "price": price, "type": item.get("type", "custom"), "purchased_at": purchased_at}
+    charged = False
     try:
-        charged = users.find_one_and_update(
+        result = users.find_one_and_update(
             {"guild_id": int(guild_id), "user_id": int(user_id), "balance": {"$gte": price}},
             {"$inc": {"balance": -price}, "$push": {"inventory": inventory_entry}},
             return_document=ReturnDocument.AFTER,
         )
-        if charged is None: return "not_enough"
+        if result is None: return "not_enough"
+        charged = True
+
         if role is not None:
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    member.add_roles(
-                        role,
-                        reason=f"Shop purchase: {item.get('name', role.name)}",
-                    ),
-                    bot.loop,
-                )
-                future.result(timeout=15)
-
-                # Confirm Discord actually applied the role before reporting success.
-                verify_future = asyncio.run_coroutine_threadsafe(
-                    guild.fetch_member(int(user_id)),
-                    bot.loop,
-                )
-                verified_member = verify_future.result(timeout=10)
-                if role.id not in {r.id for r in verified_member.roles}:
-                    raise RuntimeError(
-                        f"Discord did not report role {role.id} ({role.name!r}) "
-                        f"on member {user_id} after add_roles completed."
-                    )
+                # atomic=False sends one "add this role" request. The default (atomic=True) rewrites the
+                # member's whole role list from the cache, which is stale without the Members intent and
+                # can fail or even strip roles.
+                _run_on_bot_loop(bot, member.add_roles(role, atomic=False,
+                                 reason=f"Shop purchase: {item.get('name', role.name)}"), 15)
+            except discord.Forbidden:
+                log.error("Discord refused the role (403): guild=%s user=%s role=%s (%s). Bot role must be above it and have Manage Roles.",
+                          guild_id, user_id, role.id, role.name)
+                _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+                return "permissions"
             except Exception:
-                log.exception(
-                    "Shop role assignment failed: guild=%s user=%s role=%s (%s) item=%s",
-                    guild_id,
-                    user_id,
-                    role.id if role else None,
-                    role.name if role else None,
-                    item.get("item_id"),
-                )
-                users.update_one({"guild_id": int(guild_id), "user_id": int(user_id)},
-                                 {"$inc": {"balance": price}, "$pull": {"inventory": {"item_id": item["item_id"], "purchased_at": inventory_entry["purchased_at"]}}})
+                log.exception("Shop role assignment failed: guild=%s user=%s role=%s (%s) item=%s",
+                              guild_id, user_id, role.id, role.name, item.get("item_id"))
+                _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
                 return "assignment_failed"
-        log_activity("shop_purchase", user_id, member.name, guild_id, price,
-                     {"item_id": item["item_id"], "item": item.get("name"), "type": item.get("type", "custom")})
-        return "success"
+            try:  # best-effort confirmation; a failed lookup must not undo a successful grant
+                verified = _run_on_bot_loop(bot, guild.fetch_member(int(user_id)), 10)
+                if role.id not in {r.id for r in verified.roles}:
+                    log.error("Discord accepted add_roles but role %s is not on member %s.", role.id, user_id)
+                    _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+                    return "assignment_failed"
+            except Exception:
+                log.warning("Could not re-check member %s after granting role %s; trusting Discord's success.", user_id, role.id)
     except Exception:
         log.exception("Shop purchase failed")
+        if charged:
+            _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
         return "purchase_failed"
+
+    try:
+        log_activity("shop_purchase", user_id, member.name, guild_id, price,
+                     {"item_id": item["item_id"], "item": item.get("name"), "type": item.get("type", "custom")})
+    except Exception:
+        log.exception("Purchase succeeded but the activity log entry failed")
+    return "success"
 
 
 async def shop_item_autocomplete(interaction: discord.Interaction, current: str):
     if not interaction.guild: return []
     controls = await db(get_member_controls, interaction.guild.id, interaction.user.id)
     if controls["blocked_from_candy"]: return []
-    member = interaction.guild.get_member(interaction.user.id)
-    if member is None: member = await db(get_bot_member, interaction.guild.id, interaction.user.id)
-    if member is None: return []
+    member = interaction.user  # comes with the member's CURRENT roles
     items = await db(get_shop_items_for_guild, interaction.guild.id, True)
     choices = []
     for item in items:
@@ -537,8 +692,8 @@ async def shop_item_autocomplete(interaction: discord.Interaction, current: str)
         if item.get("type") == "role":
             role_id = item.get("reward", {}).get("role_id")
             role = interaction.guild.get_role(int(role_id)) if role_id else None
-            if not role or role in member.roles: continue
-        label = f"{item.get('emoji', '🎃')} {item.get('name', 'Shop Item')} — {int(item.get('price', 0)):,} 🍬"
+            if not role or role in getattr(member, "roles", []): continue
+        label = f"{emoji_plain(item.get('emoji'))} {item.get('name', 'Shop Item')} — {int(item.get('price', 0)):,} 🍬".strip()
         if current.lower() not in label.lower(): continue
         choices.append(app_commands.Choice(name=label[:100], value=str(item["item_id"])))
     return choices[:25]
@@ -689,6 +844,7 @@ LOG_EVENTS = {
     "give":                ("economy", "🤝", "Candy Transfer", 0),
     "buy":                 ("shop", "🛒", "Shop Purchase", 0),
     "web_buy":             ("shop", "🛒", "Shop Purchase (Web)", 0),
+    "shop_purchase":       ("shop", "🛒", "Shop Purchase", 0),
     "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
@@ -2392,55 +2548,60 @@ class HalloweenBot(commands.Cog):
         if (await db(get_member_controls, interaction.guild.id, interaction.user.id))["blocked_from_candy"]:
             await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
         await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
+        await interaction.response.defer(ephemeral=True)
         result = await db(purchase_shop_item, interaction.guild.id, interaction.user.id, item)
-        messages = {"success":"Purchase complete.","unavailable":"That shop item is no longer available.","offline":"The bot is currently offline from this server.","member_missing":"I could not find you as a server member.","requirements":"You do not meet this item's required roles.","owned":"You already own that role.","permissions":"The bot cannot assign that role because of its permissions or role hierarchy.","not_enough":"You do not have enough Candy.","assignment_failed":"The purchase could not be completed; your Candy was restored.","purchase_failed":"The purchase could not be completed."}
-        embed = discord.Embed(title="🛒 Shop Purchase" if result=="success" else "🎃 Shop", description=messages.get(result,"Purchase failed."), color=discord.Color.green() if result=="success" else discord.Color.red())
+        embed = discord.Embed(title="🛒 Shop Purchase" if result == "success" else "🎃 Shop",
+                              description=SHOP_RESULT_MESSAGES.get(result, "Purchase failed."),
+                              color=discord.Color.green() if result == "success" else discord.Color.red())
         item_data = await db(lambda: shop_items.find_one({"guild_id": interaction.guild.id, "item_id": item}))
         if item_data:
             embed.add_field(name="Item", value=f"{item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')}", inline=False)
             embed.add_field(name="Price", value=f"{int(item_data.get('price',0)):,} 🍬", inline=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="shop", description="View the Halloween Candy shop.")
     async def shop(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True); return
         items = await db(get_shop_items_for_guild, interaction.guild.id, True)
-        member = interaction.guild.get_member(interaction.user.id)
-        view = discord.ui.LayoutView(timeout=180)
-        summary = ["# 🛒 Halloween Candy Shop","Spend your 🍬 Candy on items configured by the Aureolis Shop Panel."]
+        member = interaction.user  # carries the member's current roles
+        view = discord.ui.LayoutView(timeout=600)
+        summary = ["# 🛒 Halloween Candy Shop", "Spend your 🍬 Candy on items configured by the Aureolis Shop Panel."]
         for item_data in items:
-            eligible = member is not None and member_meets_shop_requirements(member, item_data)
+            eligible = member_meets_shop_requirements(member, item_data)
             requirement = shop_requirement_text(interaction.guild, item_data)
             status = "✅ Eligible" if eligible else "🔒 Locked"
             summary.append(f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — {int(item_data.get('price',0)):,} 🍬\n{item_data.get('description','')}\n{status} • {requirement}")
         if not items: summary.append("\nNo shop items are currently configured.")
         view.add_item(discord.ui.Container(discord.ui.TextDisplay("\n".join(summary)[:3900])))
-        buttons=[]
-        for item_data in items:
-            eligible = member is not None and member_meets_shop_requirements(member, item_data)
-            disabled = not eligible
-            if item_data.get("type")=="role":
-                role_id=item_data.get("reward",{}).get("role_id")
-                role=interaction.guild.get_role(int(role_id)) if role_id else None
-                if not role or role in getattr(member,"roles",[]): disabled=True
-            button=discord.ui.Button(label=f"Buy {item_data.get('name','Item')}"[:80],
-                                     style=discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary,
-                                     custom_id=f"shop:buy:{item_data['item_id']}",disabled=disabled)
+        buttons = []
+        for item_data in items[:25]:
+            disabled = not member_meets_shop_requirements(member, item_data)
+            if item_data.get("type") == "role":
+                role_id = item_data.get("reward", {}).get("role_id")
+                role = interaction.guild.get_role(int(role_id)) if role_id else None
+                if not role or role in getattr(member, "roles", []): disabled = True
+            button = discord.ui.Button(label=f"Buy {item_data.get('name','Item')}"[:80],
+                                       emoji=emoji_for_button(item_data.get("emoji")),
+                                       style=discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary,
+                                       disabled=disabled)
+
             async def callback(btn_interaction, item_id=str(item_data["item_id"])):
-                result=await db(purchase_shop_item,btn_interaction.guild.id,btn_interaction.user.id,item_id)
-                result_messages={"success":"Purchase complete.","unavailable":"That shop item is no longer available.","offline":"The bot is currently offline from this server.","member_missing":"I could not find you as a server member.","requirements":"You no longer meet this item's required roles.","owned":"You already own that role.","permissions":"The bot cannot assign that role because of its permissions or role hierarchy.","not_enough":"You do not have enough Candy.","assignment_failed":"The purchase could not be completed; your Candy was restored.","purchase_failed":"The purchase could not be completed."}
-                item_now=await db(lambda:shop_items.find_one({"guild_id":btn_interaction.guild.id,"item_id":item_id}))
-                embed=discord.Embed(title="🛒 Purchase Complete" if result=="success" else "🎃 Shop",description=result_messages.get(result,"Purchase failed."),color=discord.Color.green() if result=="success" else discord.Color.red())
+                await btn_interaction.response.defer(ephemeral=True)
+                result = await db(purchase_shop_item, btn_interaction.guild.id, btn_interaction.user.id, item_id)
+                item_now = await db(lambda: shop_items.find_one({"guild_id": btn_interaction.guild.id, "item_id": item_id}))
+                embed = discord.Embed(title="🛒 Purchase Complete" if result == "success" else "🎃 Shop",
+                                      description=SHOP_RESULT_MESSAGES.get(result, "Purchase failed."),
+                                      color=discord.Color.green() if result == "success" else discord.Color.red())
                 if item_now:
-                    embed.add_field(name="Item",value=f"{item_now.get('emoji','🎃')} {item_now.get('name','Shop Item')}",inline=False)
-                    embed.add_field(name="Price",value=f"{int(item_now.get('price',0)):,} 🍬",inline=True)
-                await btn_interaction.response.send_message(embed=embed,ephemeral=True)
-            button.callback=callback
+                    embed.add_field(name="Item", value=f"{item_now.get('emoji','🎃')} {item_now.get('name','Shop Item')}", inline=False)
+                    embed.add_field(name="Price", value=f"{int(item_now.get('price',0)):,} 🍬", inline=True)
+                await btn_interaction.followup.send(embed=embed, ephemeral=True)
+            button.callback = callback
             buttons.append(button)
-        for start in range(0,len(buttons),5):
-            row=discord.ui.ActionRow()
-            for button in buttons[start:start+5]: row.add_item(button)
+        for start in range(0, len(buttons), 5):
+            row = discord.ui.ActionRow()
+            for button in buttons[start:start + 5]: row.add_item(button)
             view.add_item(discord.ui.Container(row))
         await interaction.response.send_message(view=view)
 
