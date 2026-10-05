@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You’re authorized • Aureolis</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
+</head>
+<body>
+  <div class="glow glow-one"></div>
+  <div class="glow glow-two"></div>
+  <main>
+    <nav>
+      <a class="brand brand-link" href="/"><span class="brand-logo" aria-hidden="true">🎃</span><div><strong>Aureolis</strong><small>Halloween Event</small></div></a>
+    </nav>
+
+    <article class="legal consent">
+      <span class="eyebrow">ALL SET</span>
+      <h1 class="legal-title">You’re authorized{% if username %}, {{ username }}{% endif %}</h1>
+      <p class="legal-lead">Head back to Discord and run your command again. You won’t be asked again unless the terms change.</p>
+
+      {% if dm_ok %}
+        <div class="consent-ok">✅ DMs are on. We just sent you a message to confirm.</div>
+      {% else %}
+        <div class="consent-alert">
+          We couldn’t send you a DM. You’re still authorized, but you won’t get messages from the bot until you allow
+          direct messages from server members in Discord (<strong>Server → Privacy Settings</strong>, or
+          <strong>User Settings → Content &amp; Social</strong>).
+        </div>
+      {% endif %}
+
+      <div class="legal-switch">
+        <a href="/">Back to home</a>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+      </div>
+    </article>
+
+    <footer>🎃 Aureolis Halloween Bot <span>•</span> <a href="/terms">Terms of Service</a> <span>•</span> <a href="/privacy">Privacy Policy</a></footer>
+  </main>
+</body>
+</html>
