@@ -3068,6 +3068,7 @@ class AccessControlledTree(app_commands.CommandTree):
         # First-use Discord authorization is disabled. Slash commands are available
         # immediately after the normal command-access check above. The legacy OAuth
         # authorization routes remain available for dashboard/admin flows.
+        return True
 
 
 def create_bot():
