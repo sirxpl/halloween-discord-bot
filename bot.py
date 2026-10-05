@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional
 import time
 import logging
 import random
@@ -2198,6 +2199,38 @@ def add_candy(guild_id: int, user_id: int, amount: int):
     )
 
 
+def admin_candy_view(kind, member, amount, new_balance, admin, reason=None):
+    """Components V2 card for /add and /subtract. kind is 'add' or 'subtract'."""
+    adding = kind == "add"
+    ui = discord.ui
+    head = (
+        f"## {'➕ Candy Added' if adding else '➖ Candy Subtracted'}\n"
+        f"**Member:** {member.mention}\n"
+        f"**Amount:** {'+' if adding else '−'}{int(amount):,} 🍬\n"
+        f"**New balance:** {int(new_balance):,} 🍬"
+    )
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
+    if reason:
+        items += [ui.Separator(), ui.TextDisplay(f"**Reason**\n> {reason}"[:1000])]
+    items += [ui.Separator(), ui.TextDisplay(f"-# By {admin.mention} • <t:{int(now_utc().timestamp())}:f>")]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0x22C55E if adding else 0xEF4444))
+    return view
+
+
+def candy_notice_view(title, text, ok=False):
+    """Small Components V2 notice for errors and denials."""
+    ui = discord.ui
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(ui.TextDisplay(f"## {title}\n{text}"), accent_colour=0x22C55E if ok else 0xEF4444))
+    return view
+
+
+def clean_reason(reason):
+    reason = (reason or "").strip()
+    return reason[:200] or None
+
+
 intents = discord.Intents.default()
 # Arcane level-up rewards read the level-up message, so Message Content is required.
 # Enabled by default. If the Message Content intent is not switched on in the Discord Developer Portal,
@@ -2452,38 +2485,57 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(f"🎃 **Trick or treat!** You found **{reward:,} 🍬 Candy**!")
 
     @app_commands.command(name="add", description="Admin: add Candy to a member's balance.")
-    @app_commands.describe(member="Member receiving Candy.", amount="Amount of Candy to add.")
-    async def add(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
+    @app_commands.describe(member="Member receiving Candy.", amount="Amount of Candy to add.",
+                           reason="Optional reason, shown on the card and in the logs.")
+    async def add(self, interaction: discord.Interaction, member: discord.Member,
+                  amount: app_commands.Range[int, 1, 100000000],
+                  reason: Optional[app_commands.Range[str, 1, 200]] = None):
         if not is_admin(interaction.user.id):
-            await interaction.response.send_message("🚫 Only Aureolis admins can use this command.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("🚫 Admins only", "Only Aureolis admins can use this command."), ephemeral=True)
             return
         if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
+        reason = clean_reason(reason)
         await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         updated = await db(users.find_one_and_update, {"guild_id": interaction.guild.id, "user_id": member.id},
             {"$inc": {"balance": int(amount)}}, return_document=ReturnDocument.AFTER)
-        await db(log_activity, "admin_add", member.id, member.name, interaction.guild.id, int(amount), {"changed_by": interaction.user.id})
-        await interaction.response.send_message(f"✅ Added **{amount:,} 🍬 Candy** to {member.mention}. New balance: **{updated['balance']:,}**.")
+        details = {"changed_by": interaction.user.id}
+        if reason: details["reason"] = reason
+        await db(log_activity, "admin_add", member.id, member.name, interaction.guild.id, int(amount), details)
+        await interaction.response.send_message(
+            view=admin_candy_view("add", member, amount, updated["balance"], interaction.user, reason),
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
 
     @app_commands.command(name="subtract", description="Admin: subtract Candy from a member's balance.")
-    @app_commands.describe(member="Member losing Candy.", amount="Amount of Candy to subtract.")
-    async def subtract(self, interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1, 100000000]):
+    @app_commands.describe(member="Member losing Candy.", amount="Amount of Candy to subtract.",
+                           reason="Optional reason, shown on the card and in the logs.")
+    async def subtract(self, interaction: discord.Interaction, member: discord.Member,
+                       amount: app_commands.Range[int, 1, 100000000],
+                       reason: Optional[app_commands.Range[str, 1, 200]] = None):
         if not is_admin(interaction.user.id):
-            await interaction.response.send_message("🚫 Only Aureolis admins can use this command.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("🚫 Admins only", "Only Aureolis admins can use this command."), ephemeral=True)
             return
         if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
+        reason = clean_reason(reason)
         await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         updated = await db(users.find_one_and_update, {"guild_id": interaction.guild.id, "user_id": member.id, "balance": {"$gte": int(amount)}},
             {"$inc": {"balance": -int(amount)}}, return_document=ReturnDocument.AFTER)
         if not updated:
             current = await db(get_user, interaction.guild.id, member.id)
-            await interaction.response.send_message(f"❌ {member.mention} only has **{(current or {}).get('balance', 0):,} 🍬 Candy**, so that amount cannot be subtracted.", ephemeral=True)
+            await interaction.response.send_message(
+                view=candy_notice_view("❌ Not enough Candy",
+                                       f"{member.mention} only has **{(current or {}).get('balance', 0):,} 🍬 Candy**, so that amount cannot be subtracted."),
+                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             return
-        await db(log_activity, "admin_subtract", member.id, member.name, interaction.guild.id, int(amount), {"changed_by": interaction.user.id})
-        await interaction.response.send_message(f"✅ Subtracted **{amount:,} 🍬 Candy** from {member.mention}. New balance: **{updated['balance']:,}**.")
+        details = {"changed_by": interaction.user.id}
+        if reason: details["reason"] = reason
+        await db(log_activity, "admin_subtract", member.id, member.name, interaction.guild.id, int(amount), details)
+        await interaction.response.send_message(
+            view=admin_candy_view("subtract", member, amount, updated["balance"], interaction.user, reason),
+            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
