@@ -32,6 +32,24 @@
     .boost-name{font-weight:800;color:#fbbf24}.boost-multiplier{color:#86efac;font-weight:800}
     .boost-remove{padding:8px 11px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
     @media (max-width: 760px){.boost-form{grid-template-columns:1fr}.boost-row{align-items:flex-start;flex-direction:column}.boost-row form{width:100%}}
+    .gl-row{position:relative;display:grid;grid-template-columns:.8fr 1fr 1.1fr 1.5fr auto;gap:10px;align-items:start;padding:12px;border:1px solid var(--border);border-radius:12px;background:#171722;margin-top:10px}
+    .gl-row .command-search{margin-top:0}
+    .gl-rows{margin-top:6px}
+    .gl-remove{padding:11px 13px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+    .gl-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
+    .gl-actions .command-toggle{min-width:150px}
+    .gl-add{background:#1c1c2b;color:#c4b5fd;border-color:var(--border)}
+    .role-dd{position:relative}
+    .role-dd summary{list-style:none;cursor:pointer;margin:0;user-select:none}
+    .role-dd summary::-webkit-details-marker{display:none}
+    .role-dd summary::after{content:"▾";float:right;color:var(--muted)}
+    .role-panel{position:absolute;z-index:20;left:0;right:0;top:calc(100% + 6px);max-height:230px;overflow-y:auto;padding:6px;border:1px solid var(--border);border-radius:12px;background:#11111a;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+    .role-opt{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:8px;cursor:pointer;font-size:13px}
+    .role-opt:hover{background:#1c1c2b}
+    .gl-flash{margin-top:14px;padding:11px 14px;border-radius:12px;font-size:12px}
+    .gl-flash.ok{background:#163523;color:#86efac;border:1px solid #245b3b}
+    .gl-flash.err{background:#3b2020;color:#fca5a5;border:1px solid #633232}
+    @media (max-width: 760px){.gl-row{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -163,6 +181,52 @@
       {% endif %}
     </div>
 
+    <div class="access-card" id="give-limits">
+      <div class="access-header">
+        <div>
+          <h2>🤝 Give Candy Limits</h2>
+          <p class="muted">Cap how much Candy members can give with <strong>/give</strong>. Each limit counts the total Candy a member has given in the last hour, day, or week (rolling), and can apply to everyone or only to chosen roles. If a member matches several limits, <strong>all of them</strong> must allow the gift.</p>
+        </div>
+        <span class="access-badge">{{ give_limit_config.rules|length }} limit{% if give_limit_config.rules|length != 1 %}s{% endif %}</span>
+      </div>
+
+      {% if request.args.get('saved') == 'give_limits' %}<div class="gl-flash ok">✓ Give limits saved.</div>{% endif %}
+      {% if request.args.get('error') == 'invalid_give_limit' %}<div class="gl-flash err">Those limits could not be saved. Check that every limit has an amount, and that "Specific roles" limits have at least one role selected.</div>{% endif %}
+
+      {% if bot_guilds %}
+      <form method="get" action="{{ url_for('access_control_page') }}#give-limits" style="margin-top:18px">
+        <label class="muted" for="gl-guild">Server</label>
+        <select id="gl-guild" name="boost_guild" class="command-search" style="margin-top:7px" onchange="this.form.submit()">
+          {% for guild in bot_guilds %}
+            <option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+
+      <div class="server-row" style="margin-top:14px">
+        <div><div class="server-name">Give limits</div><div class="server-id">{{ 'Limits are being enforced on /give.' if give_limit_config.enabled else 'Off — /give has no limit in this server.' }}</div></div>
+        <form method="post" action="{{ url_for('access_control_give_limits_toggle') }}" style="margin:0">
+          <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+          <input type="hidden" name="enabled" value="{{ 0 if give_limit_config.enabled else 1 }}">
+          <button class="command-toggle {{ 'enabled' if give_limit_config.enabled else 'disabled' }}" type="submit">{{ '✓ Enabled' if give_limit_config.enabled else '✕ Disabled' }}</button>
+        </form>
+      </div>
+
+      <form method="post" action="{{ url_for('access_control_give_limits_save') }}" id="give-limit-form">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <div id="gl-rows" class="gl-rows"></div>
+        <p id="gl-empty" class="muted" style="margin-top:14px;display:none">No limits yet. Press <strong>+ Add limit</strong> to create one.</p>
+        <div class="gl-actions">
+          <button type="button" id="gl-add" class="command-toggle gl-add">+ Add limit</button>
+          <button type="submit" class="command-toggle enabled">Save limits</button>
+        </div>
+      </form>
+      <div class="boost-note">Limits are measured in Candy, not number of gifts. You can edit or remove limits at any time, then press <strong>Save limits</strong> — nothing changes until you save.</div>
+      {% else %}
+        <p class="muted" style="margin-top:18px">The bot is not connected to any servers right now, so give limits cannot be configured.</p>
+      {% endif %}
+    </div>
+
     <div class="access-card">
       <div class="access-header"><div><h2>Bot servers</h2><p class="muted">Servers the Discord bot is currently connected to.</p></div><span class="access-badge">{{ bot_guilds|length }} server{% if bot_guilds|length != 1 %}s{% endif %}</span></div>
       {% if bot_guilds %}
@@ -195,6 +259,99 @@
     });
     if (empty) empty.style.display = visible ? "none" : "block";
   });
+</script>
+
+<script>
+(function () {
+  const form = document.getElementById("give-limit-form");
+  if (!form) return;
+  const roles = {{ boost_roles|tojson }};
+  const saved = {{ give_limit_rules_js|tojson }};
+  const periods = {{ give_limit_periods|tojson }};
+  const maxRules = {{ give_limit_max_rules }};
+  const list = document.getElementById("gl-rows");
+  const empty = document.getElementById("gl-empty");
+  const addBtn = document.getElementById("gl-add");
+  let counter = 0;
+
+  function el(tag, attrs, children) {
+    const node = document.createElement(tag);
+    Object.entries(attrs || {}).forEach(([k, v]) => {
+      if (k === "class") node.className = v; else if (k === "text") node.textContent = v; else node.setAttribute(k, v);
+    });
+    (children || []).forEach((c) => node.appendChild(c));
+    return node;
+  }
+
+  function refresh() {
+    const count = list.children.length;
+    empty.style.display = count ? "none" : "block";
+    addBtn.disabled = count >= maxRules;
+    addBtn.style.opacity = count >= maxRules ? ".5" : "1";
+  }
+
+  function addRow(rule) {
+    const i = counter++;
+    rule = rule || { amount: "", period: "day", scope: "everyone", role_ids: [] };
+    const row = el("div", { class: "gl-row" });
+    row.appendChild(el("input", { type: "hidden", name: "rule", value: String(i) }));
+
+    const amount = el("input", { type: "number", name: "amount_" + i, min: "1", max: "100000000", step: "1", required: "", placeholder: "Candy limit", class: "command-search", "aria-label": "Candy limit" });
+    amount.value = rule.amount;
+
+    const period = el("select", { name: "period_" + i, class: "command-search", "aria-label": "Period" });
+    periods.forEach(([key, label]) => { const o = el("option", { value: key, text: label }); if (key === rule.period) o.selected = true; period.appendChild(o); });
+
+    const scope = el("select", { name: "scope_" + i, class: "command-search", "aria-label": "Who it affects" });
+    [["everyone", "Everyone"], ["roles", "Specific roles"]].forEach(([key, label]) => { const o = el("option", { value: key, text: label }); if (key === rule.scope) o.selected = true; scope.appendChild(o); });
+
+    const dd = el("details", { class: "role-dd" });
+    const summary = el("summary", { class: "command-search" });
+    const panel = el("div", { class: "role-panel" });
+    const chosen = new Set((rule.role_ids || []).map(String));
+    roles.forEach((role) => {
+      const cb = el("input", { type: "checkbox", name: "roles_" + i, value: role.id });
+      cb.checked = chosen.has(role.id);
+      cb.addEventListener("change", updateSummary);
+      panel.appendChild(el("label", { class: "role-opt" }, [cb, el("span", { text: role.name })]));
+    });
+    function updateSummary() {
+      const picked = roles.filter((r) => panel.querySelector('input[value="' + r.id + '"]').checked).map((r) => r.name);
+      summary.textContent = !picked.length ? "Select roles..." : picked.length <= 2 ? picked.join(", ") : picked.length + " roles selected";
+    }
+    updateSummary();
+    dd.appendChild(summary); dd.appendChild(panel);
+
+    function syncScope() { dd.style.display = scope.value === "roles" ? "block" : "none"; if (scope.value !== "roles") dd.open = false; }
+    scope.addEventListener("change", syncScope);
+    syncScope();
+
+    const remove = el("button", { type: "button", class: "gl-remove", text: "Remove", "aria-label": "Remove limit" });
+    remove.addEventListener("click", () => { row.remove(); refresh(); });
+
+    [amount, period, scope, dd, remove].forEach((n) => row.appendChild(n));
+    list.appendChild(row);
+    refresh();
+  }
+
+  saved.forEach(addRow);
+  addBtn.addEventListener("click", () => addRow());
+  document.addEventListener("click", (e) => {
+    document.querySelectorAll(".role-dd[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+  });
+  form.addEventListener("submit", (e) => {
+    for (const row of list.children) {
+      const scope = row.querySelector('select[name^="scope_"]');
+      if (scope.value === "roles" && !row.querySelector('input[type="checkbox"]:checked')) {
+        e.preventDefault();
+        row.querySelector("summary").scrollIntoView({ block: "center" });
+        alert('Pick at least one role for every "Specific roles" limit.');
+        return;
+      }
+    }
+  });
+  refresh();
+})();
 </script>
 </body>
 </html>
