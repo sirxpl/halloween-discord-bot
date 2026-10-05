@@ -66,7 +66,7 @@ oauth_transactions = db["oauth_transactions"]
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
 TOS_VERSION = "2026-10-04"
 
-ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299}
+ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299, 1012751329845841921}
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
