@@ -54,7 +54,7 @@ logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
 give_limits = db["give_limits"]
-trick_limits = db["trick_limits"]
+trick_cooldowns = db["trick_cooldowns"]
 shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
@@ -831,14 +831,12 @@ def calculate_daily_reward(base_reward, role_ids, guild_id):
 
 
 # =====================================================================
-#  USAGE LIMITS (/give and /trickortreat)
+#  /give LIMITS
 #  Per-server config: an on/off switch plus any number of rules. A rule is
-#  "members may do this N times / give N Candy per hour, day or week", applied
+#  "members may give at most N Candy per hour, day or week", applied
 #  to everyone or only to members holding one of the chosen roles. Windows are
 #  rolling (last 60 minutes / 24 hours / 7 days), measured from the activity
 #  log. If several rules apply to a member, every one of them must pass.
-#    give         -> the limit is an amount of Candy given
-#    trickortreat -> the limit is a number of trick-or-treats
 # =====================================================================
 GIVE_LIMIT_PERIODS = {
     "hour": ("Per hour", timedelta(hours=1)),
@@ -847,8 +845,7 @@ GIVE_LIMIT_PERIODS = {
 }
 GIVE_LIMIT_MAX_RULES = 20
 LIMIT_KINDS = {
-    "give": {"coll": give_limits, "action": "give", "log": "give_limits", "count_uses": False, "max": 100000000},
-    "trickortreat": {"coll": trick_limits, "action": "trick_or_treat", "log": "trick_limits", "count_uses": True, "max": 1000},
+    "give": {"coll": give_limits, "action": "give", "log": "give_limits", "max": 100000000},
 }
 
 
@@ -912,7 +909,7 @@ def set_limit_rules(kind, guild_id, rules, valid_role_ids, updated_by=None):
 def check_limits(kind, guild_id, user_id, role_ids, pending=1):
     """Check a pending action against the server's limit rules.
 
-    `pending` is the Candy amount for /give and is ignored for /trickortreat (one use).
+    `pending` is the Candy amount being given.
     Returns (blocked, statuses). `statuses` has one entry per rule that applies to this member, each with
     limit / used / remaining / period / resets_at. `blocked` is the most restrictive failing entry, or None.
     `statuses` is empty when limits are off or no rule applies to the member.
@@ -921,7 +918,7 @@ def check_limits(kind, guild_id, user_id, role_ids, pending=1):
     config = get_limit_config(kind, guild_id)
     if not config["enabled"] or not config["rules"]:
         return None, []
-    pending = 1 if spec["count_uses"] else int(pending)
+    pending = int(pending)
     role_ids = {int(r) for r in role_ids}
     now = now_utc()
     statuses = []
@@ -933,15 +930,14 @@ def check_limits(kind, guild_id, user_id, role_ids, pending=1):
             {"action": spec["action"], "guild_id": int(guild_id), "user_id": int(user_id), "created_at": {"$gte": now - window}},
             {"amount": 1, "created_at": 1},
         ).sort("created_at", 1))
-        weight = (lambda e: 1) if spec["count_uses"] else (lambda e: int(e.get("amount") or 0))
-        used = sum(weight(e) for e in entries)
+        used = sum(int(e.get("amount") or 0) for e in entries)
         limit = rule["amount"]
         status = {"limit": limit, "used": used, "remaining": max(0, limit - used), "period": rule["period"],
                   "exceeds": used + pending > limit, "too_big": pending > limit, "resets_at": None}
         if status["exceeds"] and not status["too_big"]:
             need, freed = used + pending - limit, 0
             for entry in entries:
-                freed += weight(entry)
+                freed += int(entry.get("amount") or 0)
                 if freed >= need:
                     created = entry["created_at"]
                     if created.tzinfo is None:
@@ -960,6 +956,94 @@ def get_give_limits(guild_id):
 
 def check_give_limits(guild_id, user_id, role_ids, amount):
     return check_limits("give", guild_id, user_id, role_ids, amount)
+
+
+# =====================================================================
+#  /trickortreat COOLDOWN
+#  Everyone waits TRICK_COOLDOWN_DEFAULT_SECONDS (1 minute) between trick-or-treats. Admins can turn on
+#  custom cooldowns per server: each rule is a length of time that applies to everyone or only to members with
+#  chosen roles. If a member matches several rules, the SHORTEST one wins (so a role can get a faster cooldown).
+#  A member who matches no rule, or a server with custom cooldowns switched off, uses the default.
+# =====================================================================
+TRICK_COOLDOWN_DEFAULT_SECONDS = 60
+TRICK_COOLDOWN_MAX_SECONDS = 7 * 24 * 3600
+TRICK_COOLDOWN_UNITS = {"seconds": ("Seconds", 1), "minutes": ("Minutes", 60), "hours": ("Hours", 3600)}
+
+
+def split_cooldown_seconds(total):
+    """Turn a number of seconds into the largest whole unit, e.g. 120 -> (2, 'minutes')."""
+    for unit in ("hours", "minutes"):
+        size = TRICK_COOLDOWN_UNITS[unit][1]
+        if total % size == 0:
+            return total // size, unit
+    return total, "seconds"
+
+
+def get_trick_cooldowns(guild_id):
+    record = trick_cooldowns.find_one({"guild_id": int(guild_id)}) or {}
+    rules = []
+    for rule in record.get("rules", []):
+        seconds = int(rule.get("seconds", 0))
+        if seconds < 1:
+            continue
+        amount, unit = split_cooldown_seconds(seconds)
+        rules.append({
+            "id": str(rule.get("id", "")), "seconds": seconds, "amount": amount, "period": unit,
+            "scope": "roles" if rule.get("scope") == "roles" else "everyone",
+            "role_ids": [int(r) for r in rule.get("role_ids", [])],
+        })
+    return {"enabled": bool(record.get("enabled", False)), "rules": rules}
+
+
+def set_trick_cooldowns_enabled(guild_id, enabled, updated_by=None):
+    trick_cooldowns.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {"guild_id": int(guild_id), "enabled": bool(enabled),
+                  "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None}},
+        upsert=True,
+    )
+
+
+def set_trick_cooldown_rules(guild_id, rules, valid_role_ids, updated_by=None):
+    """Replace the saved cooldown rules. Raises ValueError on anything invalid."""
+    if len(rules) > GIVE_LIMIT_MAX_RULES:
+        raise ValueError("Too many cooldowns.")
+    valid_role_ids = {int(r) for r in valid_role_ids}
+    cleaned = []
+    for rule in rules:
+        if rule["period"] not in TRICK_COOLDOWN_UNITS:
+            raise ValueError("Unknown time unit.")
+        seconds = int(rule["amount"]) * TRICK_COOLDOWN_UNITS[rule["period"]][1]
+        if seconds < 1 or seconds > TRICK_COOLDOWN_MAX_SECONDS:
+            raise ValueError("Cooldown out of range.")
+        scope = rule["scope"]
+        if scope not in {"everyone", "roles"}:
+            raise ValueError("Unknown effect.")
+        role_ids = []
+        if scope == "roles":
+            role_ids = sorted({int(r) for r in rule.get("role_ids", [])})
+            if not role_ids or not set(role_ids) <= valid_role_ids:
+                raise ValueError("Pick at least one valid role.")
+        cleaned.append({"id": secrets.token_hex(4), "seconds": seconds, "scope": scope, "role_ids": role_ids})
+    trick_cooldowns.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {"guild_id": int(guild_id), "rules": cleaned,
+                  "updated_at": now_utc(), "updated_by": int(updated_by) if updated_by else None},
+         "$setOnInsert": {"enabled": False}},
+        upsert=True,
+    )
+    return cleaned
+
+
+def resolve_trick_cooldown(guild_id, role_ids):
+    """Cooldown in seconds for a member with these roles."""
+    config = get_trick_cooldowns(guild_id)
+    if not config["enabled"]:
+        return TRICK_COOLDOWN_DEFAULT_SECONDS
+    role_ids = {int(r) for r in role_ids}
+    applicable = [rule["seconds"] for rule in config["rules"]
+                  if rule["scope"] == "everyone" or role_ids.intersection(rule["role_ids"])]
+    return min(applicable) if applicable else TRICK_COOLDOWN_DEFAULT_SECONDS
 
 
 # =====================================================================
@@ -997,7 +1081,7 @@ LOG_EVENTS = {
     "daily_boost":         ("admin", "⚡", "Daily Boost Set", 0),
     "daily_boost_removed": ("admin", "⚡", "Daily Boost Removed", 0),
     "give_limits":         ("admin", "🎁", "Give Limits Updated", 0),
-    "trick_limits":        ("admin", "🎃", "Trick-or-Treat Limits Updated", 0),
+    "trick_cooldown":      ("admin", "🎃", "Trick-or-Treat Cooldown Updated", 0),
     "economy_settings":    ("admin", "⚙️", "Economy Settings Changed", 0),
     "logging_test":        ("system", "🧪", "Logging Test", 0),
 }
@@ -1850,6 +1934,12 @@ def access_control_page():
             # Discord IDs are bigger than JavaScript can hold exactly, so the page gets them as strings.
             "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in config["rules"]],
         }
+    cooldown_config = get_trick_cooldowns(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {"enabled": False, "rules": []}
+    limit_cards["trickortreat"] = {
+        "enabled": cooldown_config["enabled"],
+        "rules": cooldown_config["rules"],
+        "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in cooldown_config["rules"]],
+    }
     return render_template(
         "access_control.html",
         user=user,
@@ -1864,6 +1954,7 @@ def access_control_page():
         limit_cards=limit_cards,
         give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
         give_limit_max_rules=GIVE_LIMIT_MAX_RULES,
+        cooldown_units=[(key, label) for key, (label, _) in TRICK_COOLDOWN_UNITS.items()],
     )
 
 
@@ -1996,6 +2087,61 @@ def access_control_limits_save(kind):
     except (TypeError, ValueError):
         return _limits_redirect(kind, guild_id, error=f"limit_{kind}")
     return _limits_redirect(kind, guild_id, saved=f"limits_{kind}")
+
+
+@app.post("/access-control/cooldown/toggle")
+def access_control_cooldown_toggle():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id)
+        enabled = request.form.get("enabled") == "1"
+        bot = BOT.get("instance")
+        if not (bot and not bot.is_closed() and bot.get_guild(guild_id)):
+            raise ValueError
+        set_trick_cooldowns_enabled(guild_id, enabled, user["id"])
+        log_activity("trick_cooldown", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"enabled": enabled, "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return _limits_redirect("trickortreat", guild_id, error="limit_trickortreat")
+    return _limits_redirect("trickortreat", guild_id, saved="limits_trickortreat")
+
+
+@app.post("/access-control/cooldown/save")
+def access_control_cooldown_save():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id)
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None:
+            raise ValueError
+        rules = []
+        for index in request.form.getlist("rule"):
+            if not index.isdigit():
+                raise ValueError
+            rules.append({
+                "amount": request.form.get(f"amount_{index}", ""),
+                "period": request.form.get(f"period_{index}", ""),
+                "scope": request.form.get(f"scope_{index}", ""),
+                "role_ids": request.form.getlist(f"roles_{index}"),
+            })
+        valid_roles = [role.id for role in guild.roles if not role.is_default()]
+        cleaned = set_trick_cooldown_rules(guild_id, rules, valid_roles, user["id"])
+        log_activity("trick_cooldown", user_id=user["id"], username=user.get("username"), guild_id=guild_id,
+                     details={"rule_count": len(cleaned), "changed_by": user["id"]})
+    except (TypeError, ValueError):
+        return _limits_redirect("trickortreat", guild_id, error="limit_trickortreat")
+    return _limits_redirect("trickortreat", guild_id, saved="limits_trickortreat")
 
 
 @app.post("/access-control/command/<command_name>")
@@ -2485,7 +2631,7 @@ TRICK_OR_TREAT_LINES = (
 )
 
 
-def trick_or_treat_view(member, reward, new_balance, limit_status=None, next_at=None):
+def trick_or_treat_view(member, reward, new_balance, next_at):
     """Components V2 card for a successful /trickortreat."""
     ui = discord.ui
     head = (
@@ -2494,25 +2640,14 @@ def trick_or_treat_view(member, reward, new_balance, limit_status=None, next_at=
         f"**Found:** +{int(reward):,} 🍬\n"
         f"**New balance:** {int(new_balance):,} 🍬"
     )
-    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
-    if limit_status:
-        word = GIVE_PERIOD_WORDS[limit_status["period"]]
-        left = max(0, limit_status["limit"] - limit_status["used"] - 1)
-        items += [ui.Separator(), ui.TextDisplay(f"-# {left:,} trick-or-treat{'' if left == 1 else 's'} left this {word}")]
-    elif next_at:
-        items += [ui.Separator(), ui.TextDisplay(f"-# Next trick-or-treat <t:{int(next_at.timestamp())}:R>")]
+    items = [
+        ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
+        ui.Separator(),
+        ui.TextDisplay(f"-# Next trick-or-treat <t:{int(next_at.timestamp())}:R>"),
+    ]
     view = ui.LayoutView(timeout=None)
     view.add_item(ui.Container(*items, accent_colour=0xF97316))
     return view
-
-
-def trick_limit_blocked_view(status):
-    """Private notice when /trickortreat is stopped by a limit rule."""
-    word = GIVE_PERIOD_WORDS[status["period"]]
-    text = f"You've gone trick-or-treating **{status['used']:,} / {status['limit']:,}** times in the last {word}."
-    if status["resets_at"]:
-        text += f"\nYou can go again <t:{int(status['resets_at'].timestamp())}:R>."
-    return candy_notice_view("🏠 No more Candy yet", text)
 
 
 def profile_candy_view(member, user, rank, next_daily=None):
@@ -2798,23 +2933,16 @@ class HalloweenBot(commands.Cog):
         if controls["blocked_from_candy"]:
             await interaction.response.send_message(view=notice("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server."), ephemeral=True)
             return
-        # Dashboard limits (Access Control) decide how often a member may go. If limits are off, or none of them
-        # applies to this member, the default one-trick-or-treat-per-hour cooldown below is used instead.
-        blocked, statuses = await db(
-            check_limits, "trickortreat", guild_id, user_id, [role.id for role in getattr(interaction.user, "roles", [])])
-        if blocked:
-            await interaction.response.send_message(view=trick_limit_blocked_view(blocked), ephemeral=True)
-            return
-        use_cooldown = not statuses
+        # The cooldown is 1 minute by default; the dashboard (Access Control) can change it per server and per role.
+        cooldown = await db(resolve_trick_cooldown, guild_id, [role.id for role in getattr(interaction.user, "roles", [])])
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
         reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
-        query = {"guild_id": guild_id, "user_id": user_id}
-        if use_cooldown:
-            query["$or"] = [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": now - timedelta(hours=1)}}]
         updated = await db(
-            users.find_one_and_update, query,
+            users.find_one_and_update,
+            {"guild_id": guild_id, "user_id": user_id,
+             "$or": [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": now - timedelta(seconds=cooldown)}}]},
             {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
             return_document=ReturnDocument.AFTER,
         )
@@ -2824,14 +2952,12 @@ class HalloweenBot(commands.Cog):
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
             await interaction.response.send_message(
-                view=notice("🏠 No more Candy yet", f"The neighbours are out of treats. Try again <t:{int((last + timedelta(hours=1)).timestamp())}:R>."),
+                view=notice("🏠 No more Candy yet", f"The neighbours are out of treats. Try again <t:{int((last + timedelta(seconds=cooldown)).timestamp())}:R>."),
                 ephemeral=True)
             return
         await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)
-        tightest = min(statuses, key=lambda st: st["remaining"]) if statuses else None
         await interaction.response.send_message(
-            view=trick_or_treat_view(interaction.user, reward, updated["balance"], tightest,
-                                     next_at=now + timedelta(hours=1) if use_cooldown else None),
+            view=trick_or_treat_view(interaction.user, reward, updated["balance"], now + timedelta(seconds=cooldown)),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="add", description="Admin: add Candy to a member's balance.")
