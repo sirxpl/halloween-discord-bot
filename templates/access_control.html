@@ -32,6 +32,14 @@
     .boost-name{font-weight:800;color:#fbbf24}.boost-multiplier{color:#86efac;font-weight:800}
     .boost-remove{padding:8px 11px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
     @media (max-width: 760px){.boost-form{grid-template-columns:1fr}.boost-row{align-items:flex-start;flex-direction:column}.boost-row form{width:100%}}
+    .badge-config-form{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr auto;gap:12px;margin-top:18px;align-items:end}
+    .badge-field label{display:block;color:var(--muted);font-size:11px;margin:0 0 6px}
+    .badge-field select,.badge-field input{width:100%;min-height:42px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:#11111a;color:var(--text);font:inherit}
+    .badge-field input[type=color]{padding:4px}
+    .badge-icon{width:32px;height:32px;object-fit:contain;vertical-align:middle;margin-right:8px}
+    .badge-gradient{display:inline-block;width:68px;height:12px;margin-left:8px;border-radius:99px;vertical-align:middle}
+    .badge-empty{padding:18px 0;color:var(--muted);font-size:12px}
+    @media(max-width:760px){.badge-config-form{grid-template-columns:1fr 1fr}.badge-config-form button{grid-column:1/-1}}
     .gl-row{position:relative;display:grid;grid-template-columns:.8fr 1fr 1.1fr 1.5fr auto;gap:10px;align-items:start;padding:12px;border:1px solid var(--border);border-radius:12px;background:#171722;margin-top:10px}
     .gl-row .command-search{margin-top:0}
     .gl-rows{margin-top:6px}
@@ -106,6 +114,48 @@
   {% else %}
     <div class="access-card">
       <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
+    </div>
+    <div class="access-card">
+      <div class="access-header">
+        <div><h2>🏷️ Badges &amp; nickname gradients</h2><p class="muted">Assign a Discord role to a badge and name gradient. Members see every badge they qualify for; the highest role controls their gradient.</p></div>
+        <span class="access-badge">{{ badge_configs|length }} configured</span>
+      </div>
+      {% if request.args.get('saved') in ['badge', 'badge_removed'] %}<div class="gl-flash ok">✓ Badge settings saved.</div>{% endif %}
+      {% if request.args.get('error') == 'badge' %}<div class="gl-flash err">Those badge settings could not be saved. Choose a server role, badge, and valid colors.</div>{% endif %}
+      {% if bot_guilds %}
+      <form method="get" action="{{ url_for('access_control_page') }}" style="margin-top:18px">
+        <label class="muted" for="badge-guild">Server</label>
+        <select id="badge-guild" name="boost_guild" class="command-search" style="margin-top:7px" onchange="this.form.submit()">
+          {% for guild in bot_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}
+        </select>
+      </form>
+      {% if boost_roles %}
+      <form method="post" action="{{ url_for('access_control_badge_save') }}" class="badge-config-form">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <div class="badge-field"><label for="badge-role">Discord role</label><select id="badge-role" name="role_id" required><option value="">Select a role</option>{% for role in boost_roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select></div>
+        <div class="badge-field"><label for="badge-type">Badge icon</label><select id="badge-type" name="badge_type" required>{% for key, label in badge_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="badge-field"><label for="gradient-start">Gradient start</label><input id="gradient-start" name="gradient_start" type="color" value="#8b5cf6" required></div>
+        <div class="badge-field"><label for="gradient-end">Gradient end</label><input id="gradient-end" name="gradient_end" type="color" value="#f97316" required></div>
+        <button class="command-toggle enabled" type="submit">Save role badge</button>
+      </form>
+      {% else %}<p class="badge-empty">This server has no roles to assign a badge to.</p>{% endif %}
+      {% if badge_configs %}
+      <div class="server-list">
+        {% for config in badge_configs %}
+        <div class="server-row">
+          <div>
+            <div class="server-name"><img class="badge-icon" src="{{ config.icon_url }}" alt="{{ config.badge_label }} badge">{{ config.role_name }} <span class="access-badge">{{ config.badge_label }}</span></div>
+            <div class="server-id">Members with this role receive this badge and name gradient <span class="badge-gradient" style="background:linear-gradient(90deg,{{ config.gradient_start }},{{ config.gradient_end }})"></span></div>
+          </div>
+          <form method="post" action="{{ url_for('access_control_badge_remove') }}" style="margin:0">
+            <input type="hidden" name="guild_id" value="{{ boost_guild_id }}"><input type="hidden" name="role_id" value="{{ config.role_id }}">
+            <button class="boost-remove" type="submit">Remove</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}<p class="badge-empty">No role badges are configured for this server yet.</p>{% endif %}
+      {% else %}<p class="badge-empty">The bot is not connected to any servers right now.</p>{% endif %}
     </div>
     <div class="access-card">
       <div class="access-header"><div><h2>Slash command access</h2><p class="muted">Search commands and enable or disable them from the dashboard.</p></div><span class="access-badge">{{ slash_commands|length }} command{% if slash_commands|length != 1 %}s{% endif %}</span></div>

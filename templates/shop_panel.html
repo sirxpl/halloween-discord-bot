@@ -21,6 +21,9 @@ textarea.field{min-height:84px;resize:vertical}
 .msg.ok{background:#163523;color:#86efac}.msg.err{background:#3b1717;color:#fca5a5}
 .badge{display:inline-block;font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px;margin-left:6px}
 .badge.warn{background:#3a2c0c;color:#fcd34d}.badge.off{background:#232030;color:#9b94ad}.badge.on{background:#163523;color:#86efac}
+.item-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.btn.secondary{background:#1c1c2b;color:#c4b5fd;border-color:#343447}
+.btn.danger{background:#3b1717;color:#fca5a5;border-color:#633232}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .hidden{display:none!important}
 
@@ -57,7 +60,8 @@ textarea.field{min-height:84px;resize:vertical}
 <h1>🛒 Shop Panel</h1>
 <p class="muted">Add anything to the Candy shop. Choose what members receive, and who is allowed to buy it.</p>
 
-{% if request.args.get('saved') %}<div class="msg ok">✅ Shop item added.</div>{% endif %}
+{% if request.args.get('saved') %}<div class="msg ok">✅ {{ 'Shop item updated.' if request.args.get('saved') == 'updated' else 'Shop item added.' }}</div>{% endif %}
+{% if request.args.get('updated') %}<div class="msg ok">✅ Shop item availability updated.</div>{% endif %}
 {% if request.args.get('removed') %}<div class="msg ok">🗑️ Shop item removed.</div>{% endif %}
 {% if error_message %}<div class="msg err">⚠️ {{ error_message }}</div>{% endif %}
 
@@ -66,21 +70,22 @@ textarea.field{min-height:84px;resize:vertical}
 <h2>Select server</h2>
 <form method="get"><select class="field" name="guild" onchange="this.form.submit()">{% for g in bot_guilds %}<option value="{{ g.id }}" {% if g.id|string==guild_id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></form>
 
-<h2 style="margin-top:26px">Add Shop Item</h2>
+<h2 style="margin-top:26px">{{ 'Edit Shop Item' if edit_item else 'Add Shop Item' }}</h2>
 <form method="post" action="/shop-panel/save" id="item-form" autocomplete="off">
   <input type="hidden" name="guild_id" value="{{ guild_id }}">
+  {% if edit_item %}<input type="hidden" name="item_id" value="{{ edit_item.item_id }}">{% endif %}
 
   <label class="lbl">ITEM NAME</label>
-  <input class="field" type="text" name="name" maxlength="100" placeholder="Item name" required>
+  <input class="field" type="text" name="name" maxlength="100" placeholder="Item name" value="{{ edit_item.get('name','') if edit_item else '' }}" required>
   <label class="lbl">DESCRIPTION</label>
-  <textarea class="field" name="description" maxlength="1000" placeholder="Description"></textarea>
+  <textarea class="field" name="description" maxlength="1000" placeholder="Description">{{ edit_item.get('description','') if edit_item else '' }}</textarea>
 
   <div class="grid2">
     <div>
       <label class="lbl">EMOJI</label>
       <div class="emoji-line">
         <div class="emoji-preview" id="emoji-preview">🎃</div>
-        <input class="field" style="margin:0" type="text" name="emoji" id="emoji-input" maxlength="64" value="🎃" placeholder="🎃 or a custom emoji">
+        <input class="field" style="margin:0" type="text" name="emoji" id="emoji-input" maxlength="64" value="{{ edit_item.get('emoji','🎃') if edit_item else '🎃' }}" placeholder="🎃 or a custom emoji">
       </div>
       {% if emojis %}
       <details class="dd" id="emoji-dd">
@@ -92,20 +97,20 @@ textarea.field{min-height:84px;resize:vertical}
     </div>
     <div>
       <label class="lbl">CANDY PRICE</label>
-      <input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" required>
+      <input class="field" type="number" name="price" min="1" step="1" placeholder="Candy price" value="{{ edit_item.get('price','') if edit_item else '' }}" required>
     </div>
   </div>
 
   <fieldset class="group">
     <legend>What the user will receive</legend>
     <select class="field" name="item_type" id="item-type">
-      <option value="custom">Custom Item — adds to inventory</option>
-      <option value="role">Discord Role — grants a role</option>
+      <option value="custom" {% if not edit_item or edit_item.get('type','custom') != 'role' %}selected{% endif %}>Custom Item — adds to inventory</option>
+      <option value="role" {% if edit_item and edit_item.get('type') == 'role' %}selected{% endif %}>Discord Role — grants a role</option>
     </select>
     <div id="reward-wrap">
       <select class="field" name="role_id" id="reward-role">
         <option value="">Choose the role to give…</option>
-        {% for role in roles %}<option value="{{ role.id }}">{{ role.name }}{% if not role.assignable %} ⚠ bot can't give this{% endif %}</option>{% endfor %}
+        {% for role in roles %}<option value="{{ role.id }}" {% if edit_item and edit_item.get('reward',{}).get('role_id')|string == role.id|string %}selected{% endif %}>{{ role.name }}{% if not role.assignable %} ⚠ bot can't give this{% endif %}</option>{% endfor %}
       </select>
       <div class="muted">⚠ roles need the bot's role to sit above them with Manage Roles enabled.</div>
     </div>
@@ -114,9 +119,9 @@ textarea.field{min-height:84px;resize:vertical}
   <fieldset class="group">
     <legend>Who can buy this?</legend>
     <select class="field" name="requirement_mode" id="req-mode">
-      <option value="everyone">Everyone — any member can buy it</option>
-      <option value="any">Members with ANY of the selected roles</option>
-      <option value="all">Members with ALL of the selected roles</option>
+      <option value="everyone" {% if not edit_item or edit_item.mode == 'everyone' %}selected{% endif %}>Everyone — any member can buy it</option>
+      <option value="any" {% if edit_item and edit_item.mode == 'any' %}selected{% endif %}>Members with ANY of the selected roles</option>
+      <option value="all" {% if edit_item and edit_item.mode == 'all' %}selected{% endif %}>Members with ALL of the selected roles</option>
     </select>
     <div id="req-wrap" class="hidden">
       <details class="dd" id="req-dd">
@@ -125,7 +130,7 @@ textarea.field{min-height:84px;resize:vertical}
           <input type="search" class="dd-search" id="req-search" placeholder="Search roles…">
           <div class="dd-list" id="req-list">
             {% for role in roles %}
-            <label class="dd-opt" data-name="{{ role.name|lower }}"><input type="checkbox" name="required_role_ids" value="{{ role.id }}" data-label="{{ role.name }}"><i class="dot" style="background:{{ role.color }}"></i><span>{{ role.name }}</span></label>
+            <label class="dd-opt" data-name="{{ role.name|lower }}"><input type="checkbox" name="required_role_ids" value="{{ role.id }}" data-label="{{ role.name }}" {% if edit_item and role.id|string in edit_item.get('required_role_ids',[]) %}checked{% endif %}><i class="dot" style="background:{{ role.color }}"></i><span>{{ role.name }}</span></label>
             {% else %}<div class="dd-empty">This server has no roles to pick from.</div>{% endfor %}
           </div>
         </div>
@@ -134,8 +139,8 @@ textarea.field{min-height:84px;resize:vertical}
     </div>
   </fieldset>
 
-  <label class="muted" style="display:block;margin-top:18px"><input type="checkbox" name="enabled" checked> Enabled in the shop</label>
-  <div style="margin-top:14px"><button class="btn" type="submit">➕ Add Shop Item</button></div>
+  <label class="muted" style="display:block;margin-top:18px"><input type="checkbox" name="enabled" {% if not edit_item or edit_item.get('enabled',True) %}checked{% endif %}> Enabled in the shop</label>
+  <div style="margin-top:14px"><button class="btn" type="submit">{{ '💾 Save Changes' if edit_item else '➕ Add Shop Item' }}</button>{% if edit_item %} <a class="btn secondary" href="{{ url_for('shop_panel_page', guild=guild_id) }}">Cancel</a>{% endif %}</div>
 </form>
 {% else %}<p>Bot is not connected to any servers.</p>{% endif %}
 </section>
@@ -156,7 +161,11 @@ textarea.field{min-height:84px;resize:vertical}
       {% endif %}
     </div>
   </div>
-  <form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="item_id" value="{{ item.get('item_id') }}"><button class="btn" type="submit">Remove</button></form>
+  <div class="item-actions">
+    <a class="btn secondary" href="{{ url_for('shop_panel_page', guild=guild_id, edit=item.get('item_id')) }}">Edit</a>
+    <form method="post" action="/shop-panel/toggle"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="item_id" value="{{ item.get('item_id') }}"><input type="hidden" name="enabled" value="{{ 0 if item.get('enabled',True) else 1 }}"><button class="btn" type="submit">{{ 'Disable' if item.get('enabled',True) else 'Enable' }}</button></form>
+    <form method="post" action="/shop-panel/remove"><input type="hidden" name="guild_id" value="{{ guild_id }}"><input type="hidden" name="item_id" value="{{ item.get('item_id') }}"><button class="btn danger" type="submit">Remove</button></form>
+  </div>
 </div>
 {% else %}<p class="muted">No shop items configured for this server.</p>{% endfor %}
 </section>
