@@ -140,6 +140,7 @@ textarea.field{min-height:84px;resize:vertical}
   </fieldset>
 
   <label class="muted" style="display:block;margin-top:18px"><input type="checkbox" name="enabled" {% if not edit_item or edit_item.get('enabled',True) %}checked{% endif %}> Enabled in the shop</label>
+  <label class="muted" style="display:block;margin-top:10px"><input type="checkbox" name="show_when_disabled" {% if edit_item and edit_item.get('show_when_disabled',False) %}checked{% endif %}> Show as offsale when disabled</label>
   <div style="margin-top:14px"><button class="btn" type="submit">{{ '💾 Save Changes' if edit_item else '➕ Add Shop Item' }}</button>{% if edit_item %} <a class="btn secondary" href="{{ url_for('shop_panel_page', guild=guild_id) }}">Cancel</a>{% endif %}</div>
 </form>
 {% else %}<p>Bot is not connected to any servers.</p>{% endif %}
