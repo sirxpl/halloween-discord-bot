@@ -58,6 +58,7 @@ trick_cooldowns = db["trick_cooldowns"]
 shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
+presentation_settings = db["presentation_settings"]
 arcane_level_rewards = db["arcane_level_rewards"]
 user_authorizations = db["user_authorizations"]
 oauth_transactions = db["oauth_transactions"]
@@ -67,6 +68,12 @@ oauth_transactions = db["oauth_transactions"]
 TOS_VERSION = "2026-10-04"
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299, 1012751329845841921}
+BADGE_TYPES = {
+    "administrator": ("Administrator", "badges/administrator.png"),
+    "carry-team": ("Carry Team", "badges/carry-team.png"),
+    "staff": ("Staff", "badges/staff.png"),
+}
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -227,8 +234,13 @@ def shop_panel_page():
         listing["mode"] = item_requirement_mode(listing)
         rid = str(listing.get("reward", {}).get("role_id", ""))
         listing["cannot_assign"] = listing.get("type") == "role" and assignable.get(rid, False) is False
+    edit_id = request.args.get("edit", "")
+    edit_item = next((item for item in listings if item.get("item_id") == edit_id), None)
+    if edit_item:
+        edit_item["required_role_ids"] = [str(role_id) for role_id in edit_item.get("required_role_ids", [])]
     errors = {
         "invalid": "That item configuration is not valid. Check the name and price.",
+        "item_not_found": "That shop item no longer exists. Refresh the list and try again.",
         "role_required": "Pick the Discord role this item should give.",
         "role_unassignable": "That role cannot be given by the bot. Choose a normal role (not @everyone or a bot-managed role).",
         "role_above_bot": "The bot cannot give that role yet. In Server Settings → Roles, give the bot Manage Roles and drag the bot's role ABOVE the reward role, then try again.",
@@ -237,6 +249,7 @@ def shop_panel_page():
     }
     return render_template("shop_panel.html", user=user, avatar_url=discord_avatar_url(user),
                            bot_guilds=guilds, guild_id=gid, roles=roles, listings=listings, emojis=emojis,
+                           edit_item=edit_item,
                            error_message=errors.get(request.args.get("error")))
 
 
@@ -264,9 +277,13 @@ def shop_panel_save():
         price = int(request.form["price"])
         enabled = request.form.get("enabled") == "on"
         requirement_mode = request.form.get("requirement_mode", "everyone").lower()
-        required_role_ids = [int(x) for x in request.form.getlist("required_role_ids") if str(x).isdigit()]
+        required_role_values = request.form.getlist("required_role_ids")
+        if any(not str(value).isdigit() for value in required_role_values):
+            raise ShopConfigError("invalid")
+        required_role_ids = list(dict.fromkeys(int(value) for value in required_role_values))
         role_id_raw = request.form.get("role_id", "").strip()
         role_id = int(role_id_raw) if role_id_raw.isdigit() else None
+        item_id = request.form.get("item_id", "").strip()
         if not name or price < 1 or item_type not in {"role", "custom"} or requirement_mode not in REQUIREMENT_MODES:
             raise ShopConfigError("invalid")
         if requirement_mode == "everyone":
@@ -276,6 +293,9 @@ def shop_panel_save():
         bot = BOT.get("instance")
         guild = bot.get_guild(gid) if bot and not bot.is_closed() else None
         if guild is None:
+            raise ShopConfigError("invalid")
+        if any(guild.get_role(required_id) is None or guild.get_role(required_id).is_default()
+               for required_id in required_role_ids):
             raise ShopConfigError("invalid")
         if item_type == "role":
             role = guild.get_role(role_id) if role_id else None
@@ -287,18 +307,50 @@ def shop_panel_save():
             reward = {"role_id": role.id, "role_name": role.name}
         else:
             reward = {}
-        item_id = secrets.token_urlsafe(10)
         now = now_utc()
-        shop_items.insert_one({"guild_id": gid, "item_id": item_id, "name": name,
+        item_data = {"name": name,
             "description": description or "A Halloween shop item.", "emoji": emoji, "price": price,
             "type": item_type, "enabled": enabled, "required_role_ids": required_role_ids,
             "requirement_mode": requirement_mode, "reward": reward,
-            "created_at": now, "updated_at": now, "updated_by": int(user["id"])})
+            "updated_at": now, "updated_by": int(user["id"])}
+        if item_id:
+            existing = shop_items.find_one({"guild_id": gid, "item_id": item_id})
+            if existing is None:
+                raise ShopConfigError("item_not_found")
+            result = shop_items.update_one({"guild_id": gid, "item_id": item_id}, {"$set": item_data})
+            if not result.matched_count:
+                raise ShopConfigError("item_not_found")
+        else:
+            item_id = secrets.token_urlsafe(10)
+            shop_items.insert_one({"guild_id": gid, "item_id": item_id, **item_data, "created_at": now})
     except ShopConfigError as exc:
         return redirect(url_for("shop_panel_page", guild=gid, error=exc.code))
     except (KeyError, TypeError, ValueError):
         return redirect(url_for("shop_panel_page", guild=gid, error="invalid"))
-    return redirect(url_for("shop_panel_page", guild=gid, saved="1"))
+    return redirect(url_for("shop_panel_page", guild=gid, saved="updated" if request.form.get("item_id") else "1"))
+
+
+@app.post("/shop-panel/toggle")
+def shop_panel_toggle():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    try:
+        gid = int(request.form["guild_id"])
+        item_id = request.form["item_id"].strip()
+        enabled_value = request.form.get("enabled")
+        if not item_id or enabled_value not in {"0", "1"}:
+            raise ValueError
+        enabled = enabled_value == "1"
+    except (KeyError, TypeError, ValueError):
+        return "Invalid request", 400
+    result = shop_items.update_one(
+        {"guild_id": gid, "item_id": item_id},
+        {"$set": {"enabled": enabled, "updated_at": now_utc(), "updated_by": int(user["id"])}},
+    )
+    if not result.matched_count:
+        return redirect(url_for("shop_panel_page", guild=gid, error="item_not_found"))
+    return redirect(url_for("shop_panel_page", guild=gid, updated="1"))
 
 
 @app.post("/shop-panel/remove")
@@ -858,6 +910,42 @@ def get_bot_member(guild_id, user_id):
         return None
 
 
+def get_bot_members_for_display(member_keys):
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return {}
+    keys = {(int(guild_id), int(user_id)) for guild_id, user_id in member_keys}
+
+    async def fetch_member(guild_id, user_id, semaphore):
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            return (guild_id, user_id), None
+        member = guild.get_member(user_id)
+        if member is not None:
+            return (guild_id, user_id), member
+        async with semaphore:
+            try:
+                return (guild_id, user_id), await guild.fetch_member(user_id)
+            except discord.NotFound:
+                return (guild_id, user_id), None
+            except Exception:
+                log.exception("Could not fetch Discord member %s in guild %s", user_id, guild_id)
+                return (guild_id, user_id), None
+
+    async def fetch_all():
+        semaphore = asyncio.Semaphore(5)
+        return await asyncio.gather(
+            *(fetch_member(guild_id, user_id, semaphore) for guild_id, user_id in keys)
+        )
+
+    try:
+        results = _run_on_bot_loop(bot, fetch_all(), 15)
+        return dict(results)
+    except Exception:
+        log.exception("Could not load Discord members for leaderboard badge display")
+        return {}
+
+
 DAILY_REWARD = 100
 ARCANE_BOT_IDS = {1217870452253397082, 437808476106784770}
 ARCANE_LEVEL_BASE_BONUS = 250
@@ -874,6 +962,64 @@ TRICK_OR_TREAT_MAX = 150
 
 def is_admin(user_id):
     return int(user_id) in ADMIN_USER_IDS
+
+
+def valid_gradient_color(value, fallback):
+    value = str(value or "")
+    return value.lower() if HEX_COLOR_RE.fullmatch(value) else fallback
+
+
+def get_badge_configs(guild_id):
+    document = presentation_settings.find_one(
+        {"guild_id": int(guild_id)},
+        {"badges": 1},
+    ) or {}
+    configs = []
+    saved_badges = document.get("badges", [])
+    if not isinstance(saved_badges, list):
+        return configs
+    for item in saved_badges:
+        if not isinstance(item, dict):
+            continue
+        role_id = str(item.get("role_id", ""))
+        badge_type = item.get("badge_type")
+        if not re.fullmatch(r"[0-9]+", role_id) or badge_type not in BADGE_TYPES:
+            continue
+        label, _ = BADGE_TYPES[badge_type]
+        configs.append({
+            "role_id": role_id,
+            "role_name": str(item.get("role_name") or f"Role {role_id}"),
+            "badge_type": badge_type,
+            "badge_label": label,
+            "icon_url": url_for("static", filename=BADGE_TYPES[badge_type][1]),
+            "gradient_start": valid_gradient_color(item.get("gradient_start"), "#8b5cf6"),
+            "gradient_end": valid_gradient_color(item.get("gradient_end"), "#f97316"),
+        })
+    return configs
+
+
+def badge_presentation_for_member(member, configs):
+    if member is None or not configs:
+        return [], None
+    role_positions = {
+        str(role.id): role.position for role in getattr(member, "roles", [])
+    }
+    matching = sorted(
+        (config for config in configs if config["role_id"] in role_positions),
+        key=lambda config: role_positions[config["role_id"]],
+        reverse=True,
+    )
+    badges = [{
+        "icon_url": config["icon_url"],
+        "label": config["badge_label"],
+    } for config in matching]
+    gradient = None
+    if matching:
+        gradient = {
+            "start": matching[0]["gradient_start"],
+            "end": matching[0]["gradient_end"],
+        }
+    return badges, gradient
 
 
 def is_command_enabled(command_name):
@@ -1888,9 +2034,13 @@ def profile_page():
     rank = None
     inventory_value = 0
     next_daily = None
+    badges, name_gradient = [], None
     if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+        badge_configs = get_badge_configs(guild_id)
+        member = get_bot_member(guild_id, user["id"]) if badge_configs else None
+        badges, name_gradient = badge_presentation_for_member(member, badge_configs)
         if profile:
             rank = users.count_documents({"guild_id": guild_id, "balance": {"$gt": profile.get("balance", 0)}}) + 1
             inventory_value = sum((item.get("price", 0) or 0) for item in profile.get("inventory", []))
@@ -1912,6 +2062,8 @@ def profile_page():
         account_created=account_created,
         next_daily=next_daily,
         inventory_value=inventory_value,
+        badges=badges,
+        name_gradient=name_gradient,
     )
 
 
@@ -2127,6 +2279,7 @@ def access_control_page():
         "rules": cooldown_config["rules"],
         "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in cooldown_config["rules"]],
     }
+    badge_configs = get_badge_configs(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
     return render_template(
         "access_control.html",
         user=user,
@@ -2137,12 +2290,89 @@ def access_control_page():
         member_controls=list(member_controls.find({}).sort("updated_at", -1).limit(100)),
         boost_guild_id=selected_boost_guild_id,
         boost_roles=boost_roles,
+        badge_configs=badge_configs,
+        badge_types=[(key, value[0]) for key, value in BADGE_TYPES.items()],
         daily_boosts=saved_daily_boosts,
         limit_cards=limit_cards,
         give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
         give_limit_max_rules=GIVE_LIMIT_MAX_RULES,
         cooldown_units=[(key, label) for key, (label, _) in TRICK_COOLDOWN_UNITS.items()],
     )
+
+
+@app.post("/access-control/badges/save")
+def access_control_badge_save():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id)
+        role_id = int(request.form.get("role_id", ""))
+        badge_type = request.form.get("badge_type", "")
+        gradient_start = request.form.get("gradient_start", "")
+        gradient_end = request.form.get("gradient_end", "")
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        role = guild.get_role(role_id) if guild else None
+        if (role is None or role.is_default() or badge_type not in BADGE_TYPES
+                or not HEX_COLOR_RE.fullmatch(gradient_start)
+                or not HEX_COLOR_RE.fullmatch(gradient_end)):
+            raise ValueError
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=guild_id, error="badge"))
+
+    badge_configs = [{
+        "role_id": item["role_id"],
+        "role_name": item["role_name"],
+        "badge_type": item["badge_type"],
+        "gradient_start": item["gradient_start"],
+        "gradient_end": item["gradient_end"],
+    } for item in get_badge_configs(guild_id) if item["role_id"] != str(role_id)]
+    badge_configs.append({
+        "role_id": str(role.id),
+        "role_name": role.name,
+        "badge_type": badge_type,
+        "gradient_start": gradient_start.lower(),
+        "gradient_end": gradient_end.lower(),
+    })
+    presentation_settings.update_one(
+        {"guild_id": guild_id},
+        {"$set": {
+            "badges": badge_configs,
+            "updated_at": now_utc(),
+            "updated_by": int(user["id"]),
+        }},
+        upsert=True,
+    )
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="badge"))
+
+
+@app.post("/access-control/badges/remove")
+def access_control_badge_remove():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id)
+        role_id = request.form.get("role_id", "")
+        if not role_id.isdigit():
+            raise ValueError
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", error="badge"))
+    configs = [{
+        "role_id": item["role_id"],
+        "role_name": item["role_name"],
+        "badge_type": item["badge_type"],
+        "gradient_start": item["gradient_start"],
+        "gradient_end": item["gradient_end"],
+    } for item in get_badge_configs(guild_id) if item["role_id"] != role_id]
+    presentation_settings.update_one(
+        {"guild_id": guild_id},
+        {"$set": {"badges": configs, "updated_at": now_utc(), "updated_by": int(user["id"])}},
+    )
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="badge_removed"))
 
 
 @app.post("/access-control/member-control")
@@ -2491,8 +2721,18 @@ def leaderboard_page():
         top_users = [doc for doc in candidates if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs][:25]
         discord_bot = BOT["instance"]
         leaderboard = []
+        badge_configs_by_guild = {}
+        badge_member_keys = []
+        for doc in top_users:
+            guild_id = int(doc.get("guild_id", 0))
+            if guild_id not in badge_configs_by_guild:
+                badge_configs_by_guild[guild_id] = get_badge_configs(guild_id)
+            if badge_configs_by_guild[guild_id] and doc.get("user_id") is not None:
+                badge_member_keys.append((guild_id, doc["user_id"]))
+        badge_members = get_bot_members_for_display(badge_member_keys)
         for doc in top_users:
             user_id = doc.get("user_id")
+            guild_id = int(doc.get("guild_id", 0))
             discord_user = discord_bot.get_user(user_id) if discord_bot else None
 
             # Existing MongoDB records may not have a stored username yet.            # If the user is not cached, fetch their Discord account directly
@@ -2528,10 +2768,15 @@ def leaderboard_page():
                 except Exception:
                     avatar_url = None
 
+            badge_configs = badge_configs_by_guild[guild_id]
+            member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
+            badges, name_gradient = badge_presentation_for_member(member, badge_configs)
             leaderboard.append({
                 "name": name,
                 "balance": doc.get("balance", 0) or 0,
                 "avatar_url": avatar_url,
+                "badges": badges,
+                "name_gradient": name_gradient,
             })
         db_ok = True
     except PyMongoError:
