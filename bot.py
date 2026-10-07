@@ -2326,6 +2326,8 @@ def access_control_badge_save():
         gradient_start = request.form.get("gradient_start", "")
         gradient_end = request.form.get("gradient_end", "")
         gradient_enabled = request.form.get("gradient_enabled") == "on"
+        edit_target_type = request.form.get("edit_target_type", "").strip()
+        edit_target_id = request.form.get("edit_target_id", "").strip()
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         valid_target_id = (
@@ -2335,6 +2337,12 @@ def access_control_badge_save():
         )
         if guild is None or valid_target_id is None or badge_type not in BADGE_TYPES:
             raise ValueError
+        if bool(edit_target_type) != bool(edit_target_id):
+            raise ValueError
+        if edit_target_type:
+            edit_id_pattern = r"[0-9]+" if edit_target_type == "role" else r"[0-9]{17,20}" if edit_target_type == "user" else None
+            if edit_id_pattern is None or not re.fullmatch(edit_id_pattern, edit_target_id):
+                raise ValueError
         target_name = f"User {target_id}"
         if target_type == "role":
             role = guild.get_role(int(target_id))
@@ -2362,7 +2370,10 @@ def access_control_badge_save():
         "gradient_end": item["gradient_end"],
         "gradient_enabled": item["gradient_enabled"],
     } for item in get_badge_configs(guild_id)
-      if (item["target_type"], item["target_id"]) != (target_type, target_id)]
+      if (item["target_type"], item["target_id"]) not in {
+          (target_type, target_id),
+          (edit_target_type, edit_target_id),
+      }]
     badge_configs.append({
         "target_type": target_type,
         "target_id": target_id,
