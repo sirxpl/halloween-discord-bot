@@ -200,7 +200,13 @@ def shop_page():
     guild = selected_guild()
     guild_id = int(guild["id"]) if guild else -1
     migrate_legacy_shop_items(guild_id)
-    items = list(shop_items.find({"guild_id": guild_id, "enabled": True}).sort("price", 1))
+    items = list(shop_items.find({
+        "guild_id": guild_id,
+        "$or": [
+            {"enabled": True},
+            {"enabled": False, "show_when_disabled": True},
+        ],
+    }).sort("price", 1))
     result = request.args.get("role_result")
     purchase_message = SHOP_RESULT_MESSAGES.get(result) if result else None
     return render_template("shop.html", items=items, guild=guild, purchase_message=purchase_message,
@@ -277,6 +283,7 @@ def shop_panel_save():
         item_type = request.form.get("item_type", "custom").strip().lower()
         price = int(request.form["price"])
         enabled = request.form.get("enabled") == "on"
+        show_when_disabled = request.form.get("show_when_disabled") == "on"
         requirement_mode = request.form.get("requirement_mode", "everyone").lower()
         required_role_values = request.form.getlist("required_role_ids")
         if any(not str(value).isdigit() for value in required_role_values):
@@ -311,7 +318,8 @@ def shop_panel_save():
         now = now_utc()
         item_data = {"name": name,
             "description": description or "A Halloween shop item.", "emoji": emoji, "price": price,
-            "type": item_type, "enabled": enabled, "required_role_ids": required_role_ids,
+            "type": item_type, "enabled": enabled, "show_when_disabled": show_when_disabled,
+            "required_role_ids": required_role_ids,
             "requirement_mode": requirement_mode, "reward": reward,
             "updated_at": now, "updated_by": int(user["id"])}
         if item_id:
