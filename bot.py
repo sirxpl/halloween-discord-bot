@@ -981,32 +981,42 @@ def get_badge_configs(guild_id):
     for item in saved_badges:
         if not isinstance(item, dict):
             continue
-        role_id = str(item.get("role_id", ""))
+        target_type = item.get("target_type", "role")
+        target_id = str(item.get("target_id", item.get("role_id", "")))
         badge_type = item.get("badge_type")
-        if not re.fullmatch(r"[0-9]+", role_id) or badge_type not in BADGE_TYPES:
+        if (target_type not in {"role", "user"} or not re.fullmatch(r"[0-9]+", target_id)
+                or badge_type not in BADGE_TYPES):
             continue
         label, _ = BADGE_TYPES[badge_type]
         configs.append({
-            "role_id": role_id,
-            "role_name": str(item.get("role_name") or f"Role {role_id}"),
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_name": str(item.get("target_name") or item.get("role_name")
+                               or f"{'Role' if target_type == 'role' else 'User'} {target_id}"),
             "badge_type": badge_type,
             "badge_label": label,
             "icon_url": url_for("static", filename=BADGE_TYPES[badge_type][1]),
             "gradient_start": valid_gradient_color(item.get("gradient_start"), "#8b5cf6"),
             "gradient_end": valid_gradient_color(item.get("gradient_end"), "#f97316"),
+            "gradient_enabled": item.get("gradient_enabled", True) is True,
         })
     return configs
 
 
-def badge_presentation_for_member(member, configs):
-    if member is None or not configs:
+def badge_presentation_for_member(user_id, member, configs):
+    if not configs:
         return [], None
     role_positions = {
         str(role.id): role.position for role in getattr(member, "roles", [])
     }
     matching = sorted(
-        (config for config in configs if config["role_id"] in role_positions),
-        key=lambda config: role_positions[config["role_id"]],
+        (config for config in configs if
+         (config["target_type"] == "user" and config["target_id"] == str(user_id))
+         or (config["target_type"] == "role" and config["target_id"] in role_positions)),
+        key=lambda config: (
+            1 if config["target_type"] == "user" else 0,
+            role_positions.get(config["target_id"], 0),
+        ),
         reverse=True,
     )
     badges = [{
@@ -1014,10 +1024,11 @@ def badge_presentation_for_member(member, configs):
         "label": config["badge_label"],
     } for config in matching]
     gradient = None
-    if matching:
+    gradient_configs = [config for config in matching if config["gradient_enabled"]]
+    if gradient_configs:
         gradient = {
-            "start": matching[0]["gradient_start"],
-            "end": matching[0]["gradient_end"],
+            "start": gradient_configs[0]["gradient_start"],
+            "end": gradient_configs[0]["gradient_end"],
         }
     return badges, gradient
 
@@ -2039,8 +2050,9 @@ def profile_page():
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
         badge_configs = get_badge_configs(guild_id)
-        member = get_bot_member(guild_id, user["id"]) if badge_configs else None
-        badges, name_gradient = badge_presentation_for_member(member, badge_configs)
+        needs_role_member = any(config["target_type"] == "role" for config in badge_configs)
+        member = get_bot_member(guild_id, user["id"]) if needs_role_member else None
+        badges, name_gradient = badge_presentation_for_member(user["id"], member, badge_configs)
         if profile:
             rank = users.count_documents({"guild_id": guild_id, "balance": {"$gt": profile.get("balance", 0)}}) + 1
             inventory_value = sum((item.get("price", 0) or 0) for item in profile.get("inventory", []))
@@ -2308,33 +2320,57 @@ def access_control_badge_save():
     guild_id = request.form.get("guild_id", "")
     try:
         guild_id = int(guild_id)
-        role_id = int(request.form.get("role_id", ""))
+        target_type = request.form.get("target_type", "")
+        target_id = request.form.get("target_id", "").strip()
         badge_type = request.form.get("badge_type", "")
         gradient_start = request.form.get("gradient_start", "")
         gradient_end = request.form.get("gradient_end", "")
+        gradient_enabled = request.form.get("gradient_enabled") == "on"
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
-        role = guild.get_role(role_id) if guild else None
-        if (role is None or role.is_default() or badge_type not in BADGE_TYPES
-                or not HEX_COLOR_RE.fullmatch(gradient_start)
+        valid_target_id = (
+            re.fullmatch(r"[0-9]+", target_id) if target_type == "role"
+            else re.fullmatch(r"[0-9]{17,20}", target_id) if target_type == "user"
+            else None
+        )
+        if guild is None or valid_target_id is None or badge_type not in BADGE_TYPES:
+            raise ValueError
+        target_name = f"User {target_id}"
+        if target_type == "role":
+            role = guild.get_role(int(target_id))
+            if role is None or role.is_default():
+                raise ValueError
+            target_name = role.name
+        elif target_id == "0":
+            raise ValueError
+        if gradient_enabled and (
+                not HEX_COLOR_RE.fullmatch(gradient_start)
                 or not HEX_COLOR_RE.fullmatch(gradient_end)):
             raise ValueError
+        if not gradient_enabled:
+            gradient_start = valid_gradient_color(gradient_start, "#8b5cf6")
+            gradient_end = valid_gradient_color(gradient_end, "#f97316")
     except (TypeError, ValueError):
         return redirect(url_for("access_control_page", boost_guild=guild_id, error="badge"))
 
     badge_configs = [{
-        "role_id": item["role_id"],
-        "role_name": item["role_name"],
+        "target_type": item["target_type"],
+        "target_id": item["target_id"],
+        "target_name": item["target_name"],
         "badge_type": item["badge_type"],
         "gradient_start": item["gradient_start"],
         "gradient_end": item["gradient_end"],
-    } for item in get_badge_configs(guild_id) if item["role_id"] != str(role_id)]
+        "gradient_enabled": item["gradient_enabled"],
+    } for item in get_badge_configs(guild_id)
+      if (item["target_type"], item["target_id"]) != (target_type, target_id)]
     badge_configs.append({
-        "role_id": str(role.id),
-        "role_name": role.name,
+        "target_type": target_type,
+        "target_id": target_id,
+        "target_name": target_name,
         "badge_type": badge_type,
         "gradient_start": gradient_start.lower(),
         "gradient_end": gradient_end.lower(),
+        "gradient_enabled": gradient_enabled,
     })
     presentation_settings.update_one(
         {"guild_id": guild_id},
@@ -2356,18 +2392,27 @@ def access_control_badge_remove():
     guild_id = request.form.get("guild_id", "")
     try:
         guild_id = int(guild_id)
-        role_id = request.form.get("role_id", "")
-        if not role_id.isdigit():
+        target_type = request.form.get("target_type", "role")
+        target_id = request.form.get("target_id", request.form.get("role_id", ""))
+        valid_target_id = (
+            re.fullmatch(r"[0-9]+", target_id) if target_type == "role"
+            else re.fullmatch(r"[0-9]{17,20}", target_id) if target_type == "user"
+            else None
+        )
+        if valid_target_id is None:
             raise ValueError
     except (TypeError, ValueError):
         return redirect(url_for("access_control_page", error="badge"))
     configs = [{
-        "role_id": item["role_id"],
-        "role_name": item["role_name"],
+        "target_type": item["target_type"],
+        "target_id": item["target_id"],
+        "target_name": item["target_name"],
         "badge_type": item["badge_type"],
         "gradient_start": item["gradient_start"],
         "gradient_end": item["gradient_end"],
-    } for item in get_badge_configs(guild_id) if item["role_id"] != role_id]
+        "gradient_enabled": item["gradient_enabled"],
+    } for item in get_badge_configs(guild_id)
+      if (item["target_type"], item["target_id"]) != (target_type, target_id)]
     presentation_settings.update_one(
         {"guild_id": guild_id},
         {"$set": {"badges": configs, "updated_at": now_utc(), "updated_by": int(user["id"])}},
@@ -2727,7 +2772,8 @@ def leaderboard_page():
             guild_id = int(doc.get("guild_id", 0))
             if guild_id not in badge_configs_by_guild:
                 badge_configs_by_guild[guild_id] = get_badge_configs(guild_id)
-            if badge_configs_by_guild[guild_id] and doc.get("user_id") is not None:
+            if (any(config["target_type"] == "role" for config in badge_configs_by_guild[guild_id])
+                    and doc.get("user_id") is not None):
                 badge_member_keys.append((guild_id, doc["user_id"]))
         badge_members = get_bot_members_for_display(badge_member_keys)
         for doc in top_users:
@@ -2770,7 +2816,7 @@ def leaderboard_page():
 
             badge_configs = badge_configs_by_guild[guild_id]
             member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
-            badges, name_gradient = badge_presentation_for_member(member, badge_configs)
+            badges, name_gradient = badge_presentation_for_member(user_id, member, badge_configs)
             leaderboard.append({
                 "name": name,
                 "balance": doc.get("balance", 0) or 0,
