@@ -59,6 +59,7 @@ shop_items = db["shop_items"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
 presentation_settings = db["presentation_settings"]
+member_badge_preferences = db["member_badge_preferences"]
 arcane_level_rewards = db["arcane_level_rewards"]
 user_authorizations = db["user_authorizations"]
 oauth_transactions = db["oauth_transactions"]
@@ -1003,26 +1004,51 @@ def get_badge_configs(guild_id):
     return configs
 
 
-def badge_presentation_for_member(user_id, member, configs):
+def badge_presentation_for_member(user_id, member, configs, preferred_target=None):
     if not configs:
-        return [], None
+        return [], None, [], False
     role_positions = {
         str(role.id): role.position for role in getattr(member, "roles", [])
     }
+    matching_user_badges = [
+        config for config in configs
+        if config["target_type"] == "user" and config["target_id"] == str(user_id)
+    ]
+    matching_role_badges = sorted(
+        (config for config in configs
+         if config["target_type"] == "role" and config["target_id"] in role_positions),
+        key=lambda config: role_positions[config["target_id"]],
+    )
     matching = sorted(
-        (config for config in configs if
-         (config["target_type"] == "user" and config["target_id"] == str(user_id))
-         or (config["target_type"] == "role" and config["target_id"] in role_positions)),
+        matching_user_badges + matching_role_badges,
         key=lambda config: (
             1 if config["target_type"] == "user" else 0,
             role_positions.get(config["target_id"], 0),
         ),
         reverse=True,
     )
+    if matching_user_badges:
+        selected = matching_user_badges[0]
+        options = []
+        user_badge_override = True
+    else:
+        options = [{
+            "target_type": config["target_type"],
+            "target_id": config["target_id"],
+            "label": f"{config['target_name']} — {config['badge_label']}",
+        } for config in matching_role_badges]
+        selected = next(
+            (config for config in matching_role_badges
+             if preferred_target == f"{config['target_type']}:{config['target_id']}"),
+            matching_role_badges[0] if matching_role_badges else None,
+        )
+        if preferred_target == "none":
+            selected = None
+        user_badge_override = False
     badges = [{
         "icon_url": config["icon_url"],
         "label": config["badge_label"],
-    } for config in matching]
+    } for config in [selected] if selected]
     gradient = None
     gradient_configs = [config for config in matching if config["gradient_enabled"]]
     if gradient_configs:
@@ -1030,7 +1056,15 @@ def badge_presentation_for_member(user_id, member, configs):
             "start": gradient_configs[0]["gradient_start"],
             "end": gradient_configs[0]["gradient_end"],
         }
-    return badges, gradient
+    return badges, gradient, options, user_badge_override
+
+
+def get_member_badge_preference(guild_id, user_id):
+    preference = member_badge_preferences.find_one(
+        {"guild_id": int(guild_id), "user_id": int(user_id)},
+        {"target": 1},
+    )
+    return preference.get("target") if preference else None
 
 
 def is_command_enabled(command_name):
@@ -2045,14 +2079,17 @@ def profile_page():
     rank = None
     inventory_value = 0
     next_daily = None
-    badges, name_gradient = [], None
+    badges, name_gradient, badge_options, user_badge_override = [], None, [], False
     if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
         badge_configs = get_badge_configs(guild_id)
         needs_role_member = any(config["target_type"] == "role" for config in badge_configs)
         member = get_bot_member(guild_id, user["id"]) if needs_role_member else None
-        badges, name_gradient = badge_presentation_for_member(user["id"], member, badge_configs)
+        badge_preference = get_member_badge_preference(guild_id, user["id"])
+        badges, name_gradient, badge_options, user_badge_override = badge_presentation_for_member(
+            user["id"], member, badge_configs, badge_preference
+        )
         if profile:
             rank = users.count_documents({"guild_id": guild_id, "balance": {"$gt": profile.get("balance", 0)}}) + 1
             inventory_value = sum((item.get("price", 0) or 0) for item in profile.get("inventory", []))
@@ -2076,7 +2113,44 @@ def profile_page():
         inventory_value=inventory_value,
         badges=badges,
         name_gradient=name_gradient,
+        badge_options=badge_options,
+        badge_preference=badge_preference,
+        user_badge_override=user_badge_override,
     )
+
+
+@app.post("/profile/badge")
+def profile_badge_save():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild_id_raw = request.form.get("guild_id", "")
+    selection = request.form.get("badge_selection", "")
+    try:
+        guild_id = int(guild_id_raw)
+        if str(guild_id) not in {
+            str(guild.get("id")) for guild in session.get("discord_guilds", [])
+        }:
+            raise ValueError
+        configs = get_badge_configs(guild_id)
+        if any(config["target_type"] == "user" and config["target_id"] == str(user["id"])
+               for config in configs):
+            raise ValueError
+        member = get_bot_member(guild_id, user["id"])
+        _, _, options, _ = badge_presentation_for_member(user["id"], member, configs)
+        valid_selections = {
+            f"{option['target_type']}:{option['target_id']}" for option in options
+        }
+        if selection != "none" and selection not in valid_selections:
+            raise ValueError
+        member_badge_preferences.update_one(
+            {"guild_id": guild_id, "user_id": int(user["id"])},
+            {"$set": {"target": selection, "updated_at": now_utc()}},
+            upsert=True,
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for("profile_page", error="badge"))
+    return redirect(url_for("profile_page", saved="badge"))
 
 
 @app.get("/users")
@@ -2827,7 +2901,13 @@ def leaderboard_page():
 
             badge_configs = badge_configs_by_guild[guild_id]
             member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
-            badges, name_gradient = badge_presentation_for_member(user_id, member, badge_configs)
+            preferred_badge = (
+                get_member_badge_preference(guild_id, user_id)
+                if user_id is not None else None
+            )
+            badges, name_gradient, _, _ = badge_presentation_for_member(
+                user_id, member, badge_configs, preferred_badge
+            )
             leaderboard.append({
                 "name": name,
                 "balance": doc.get("balance", 0) or 0,
