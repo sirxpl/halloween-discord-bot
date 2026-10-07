@@ -660,7 +660,11 @@ def migrate_legacy_shop_items(guild_id=None):
 def get_shop_items_for_guild(guild_id, enabled_only=True):
     migrate_legacy_shop_items(guild_id)
     query = {"guild_id": int(guild_id)}
-    if enabled_only: query["enabled"] = True
+    if enabled_only:
+        query["$or"] = [
+            {"enabled": True},
+            {"enabled": False, "show_when_disabled": True},
+        ]
     return list(shop_items.find(query).sort("price", 1))
 
 
@@ -3844,6 +3848,12 @@ class HalloweenBot(commands.Cog):
         view = OwnedShopView(interaction.user.id)
         summary = ["# 🛒 Halloween Candy Shop", f"<@{interaction.user.id}>, spend your 🍬 Candy below. Only you can use these buttons."]
         for item_data in items:
+            if not item_data.get("enabled", True):
+                summary.append(
+                    f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — "
+                    f"{int(item_data.get('price',0)):,} 🍬\n{item_data.get('description','')}\n⛔ Offsale"
+                )
+                continue
             eligible = member_meets_shop_requirements(member, item_data)
             requirement = shop_requirement_text(interaction.guild, item_data)
             status = "✅ Eligible" if eligible else "🔒 Locked"
@@ -3852,14 +3862,18 @@ class HalloweenBot(commands.Cog):
         view.add_item(discord.ui.Container(discord.ui.TextDisplay("\n".join(summary)[:3900])))
         buttons = []
         for item_data in items[:25]:
-            disabled = not member_meets_shop_requirements(member, item_data)
+            offsale = not item_data.get("enabled", True)
+            disabled = offsale or not member_meets_shop_requirements(member, item_data)
             if item_data.get("type") == "role":
                 role_id = item_data.get("reward", {}).get("role_id")
                 role = interaction.guild.get_role(int(role_id)) if role_id else None
                 if not role or role in getattr(member, "roles", []): disabled = True
-            button = discord.ui.Button(label=f"Buy {item_data.get('name','Item')}"[:80],
+            button_label = f"Offsale: {item_data.get('name','Item')}" if offsale else f"Buy {item_data.get('name','Item')}"
+            button = discord.ui.Button(label=button_label[:80],
                                        emoji=emoji_for_button(item_data.get("emoji")),
-                                       style=discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary,
+                                       style=discord.ButtonStyle.secondary if offsale else (
+                                           discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary
+                                       ),
                                        disabled=disabled)
 
             async def callback(btn_interaction, item_id=str(item_data["item_id"])):
