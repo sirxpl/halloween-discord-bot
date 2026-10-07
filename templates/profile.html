@@ -14,6 +14,26 @@
 {% if not logged_in %}
 <div style="margin-top:24px"><a class="button" href="/login">Continue with Discord</a></div>
 {% else %}
+{% if guild and user_badge_override %}
+<section class="badge-preferences"><strong>🏷️ Profile badge</strong><p class="sub">Your profile badge is set by an admin specifically for your user ID and overrides role badges.</p></section>
+{% elif guild and badge_options %}
+<section class="badge-preferences">
+  {% if request.args.get('saved') == 'badge' %}<p class="badge-message">Your profile badge preference was saved.</p>{% endif %}
+  {% if request.args.get('error') == 'badge' %}<p class="badge-error">That badge is no longer available. Choose one of your current role badges.</p>{% endif %}
+  <form method="post" action="{{ url_for('profile_badge_save') }}">
+    <input type="hidden" name="guild_id" value="{{ guild.id }}">
+    <label for="profile-badge-choice"><strong>🏷️ Choose your profile badge</strong></label>
+    <select id="profile-badge-choice" name="badge_selection">
+      <option value="none" {% if badge_preference == 'none' %}selected{% endif %}>Hide badge</option>
+      {% for option in badge_options %}
+      <option value="{{ option.target_type }}:{{ option.target_id }}" {% if badge_preference == option.target_type ~ ':' ~ option.target_id or not badge_preference and loop.first %}selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Save badge</button>
+  </form>
+  <span class="sub">Choose one badge from your roles, ordered from the lowest role upward, or hide it.</span>
+</section>
+{% endif %}
 <section class="grid">
   <div class="card"><span class="label">🍬 Candy Balance</span><span class="value">{{ "{:,}".format(profile.balance if profile else 0) }}</span><span class="sub">Current event balance</span></div>
   <div class="card"><span class="label">🏆 Leaderboard Rank</span><span class="value">{{ "#" ~ rank if rank else "—" }}</span><span class="sub">Current ranking</span></div>
