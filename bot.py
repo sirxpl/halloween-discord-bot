@@ -3602,14 +3602,16 @@ class HalloweenBot(commands.Cog):
             except discord.HTTPException:
                 log.exception("Could not announce Arcane level bonus.")
 
-    @app_commands.command(name="balance", description="Check your Candy balance.")
-    async def balance(self, interaction: discord.Interaction):
+    @app_commands.command(name="balance", description="Check your or another member's Candy balance.")
+    @app_commands.describe(member="The member whose balance you want to view.")
+    async def balance(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         if not interaction.guild:
             await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
-        user = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
+        target = member or interaction.user
+        user = await db(ensure_user, interaction.guild.id, target.id, target.name, target.display_name)
         await interaction.response.send_message(
-            view=balance_candy_view(interaction.user, user["balance"], interaction.guild.name),
+            view=balance_candy_view(target, user["balance"], interaction.guild.name),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="daily", description="Claim your daily Candy reward.")
