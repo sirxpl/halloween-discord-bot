@@ -38,6 +38,8 @@
     .badge-field input[type=color]{padding:4px}
     .badge-gradient-toggle{display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--muted);font-size:12px}
     .badge-gradient-toggle input{accent-color:#8b5cf6}
+    .badge-form-actions{display:flex;gap:8px;align-items:center}
+    .badge-edit{padding:8px 11px;border:1px solid var(--border);border-radius:10px;background:#1c1c2b;color:#c4b5fd;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
     .badge-icon{width:32px;height:32px;object-fit:contain;vertical-align:middle;margin-right:8px}
     .badge-gradient{display:inline-block;width:68px;height:12px;margin-left:8px;border-radius:99px;vertical-align:middle}
     .badge-empty{padding:18px 0;color:var(--muted);font-size:12px}
@@ -123,7 +125,7 @@
         <span class="access-badge">{{ badge_configs|length }} configured</span>
       </div>
       {% if request.args.get('saved') in ['badge', 'badge_removed'] %}<div class="gl-flash ok">✓ Badge settings saved.</div>{% endif %}
-      {% if request.args.get('error') == 'badge' %}<div class="gl-flash err">Those badge settings could not be saved. Choose a server role, badge, and valid colors.</div>{% endif %}
+      {% if request.args.get('error') == 'badge' %}<div class="gl-flash err">Those badge settings could not be saved. Check the target, badge, and gradient colors.</div>{% endif %}
       {% if bot_guilds %}
       <form method="get" action="{{ url_for('access_control_page') }}" style="margin-top:18px">
         <label class="muted" for="badge-guild">Server</label>
@@ -131,15 +133,17 @@
           {% for guild in bot_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}
         </select>
       </form>
-      <form method="post" action="{{ url_for('access_control_badge_save') }}" class="badge-config-form">
+      <form method="post" action="{{ url_for('access_control_badge_save') }}" class="badge-config-form" id="badge-assignment">
         <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <input type="hidden" name="edit_target_type" value="">
+        <input type="hidden" name="edit_target_id" value="">
         <div class="badge-field"><label for="badge-target-type">Target</label><select id="badge-target-type" name="target_type" required><option value="role">Discord role</option><option value="user">User ID</option></select></div>
         <div class="badge-field" id="badge-role-target"><label for="badge-role">Discord role</label><select id="badge-role" name="target_id" required><option value="">Select a role</option>{% for role in boost_roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% else %}<option value="" disabled>No roles available</option>{% endfor %}</select></div>
         <div class="badge-field" id="badge-user-target" hidden><label for="badge-user-id">Discord user ID</label><input id="badge-user-id" name="target_id" type="text" inputmode="numeric" pattern="[0-9]{17,20}" maxlength="20" placeholder="e.g. 123456789012345678" disabled></div>
         <div class="badge-field"><label for="badge-type">Badge icon</label><select id="badge-type" name="badge_type" required>{% for key, label in badge_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
         <div class="badge-field"><label for="gradient-start">Gradient start</label><input id="gradient-start" name="gradient_start" type="color" value="#8b5cf6" required></div>
         <div class="badge-field"><label for="gradient-end">Gradient end</label><input id="gradient-end" name="gradient_end" type="color" value="#f97316" required></div>
-        <button class="command-toggle enabled" type="submit">Save badge</button>
+        <div class="badge-form-actions"><button class="command-toggle enabled" id="badge-submit" type="submit">Save badge</button><button class="badge-edit" id="badge-cancel-edit" type="button" hidden>Cancel</button></div>
         <label class="badge-gradient-toggle"><input type="checkbox" name="gradient_enabled" checked> Apply nickname gradient</label>
       </form>
       {% if badge_configs %}
@@ -150,6 +154,13 @@
             <div class="server-name"><img class="badge-icon" src="{{ config.icon_url }}" alt="{{ config.badge_label }} badge">{{ config.target_name }} <span class="access-badge">{{ config.badge_label }}</span></div>
             <div class="server-id">{{ 'Specific user' if config.target_type == 'user' else 'Members with this role' }} receive this badge{% if config.gradient_enabled %} and name gradient <span class="badge-gradient" style="background:linear-gradient(90deg,{{ config.gradient_start }},{{ config.gradient_end }})"></span>{% else %} — nickname gradient disabled{% endif %}</div>
           </div>
+          <button class="badge-edit" type="button"
+            data-target-type="{{ config.target_type }}"
+            data-target-id="{{ config.target_id }}"
+            data-badge-type="{{ config.badge_type }}"
+            data-gradient-start="{{ config.gradient_start }}"
+            data-gradient-end="{{ config.gradient_end }}"
+            data-gradient-enabled="{{ 'true' if config.gradient_enabled else 'false' }}">Edit</button>
           <form method="post" action="{{ url_for('access_control_badge_remove') }}" style="margin:0">
             <input type="hidden" name="guild_id" value="{{ boost_guild_id }}"><input type="hidden" name="target_type" value="{{ config.target_type }}"><input type="hidden" name="target_id" value="{{ config.target_id }}">
             <button class="boost-remove" type="submit">Remove</button>
@@ -325,7 +336,15 @@
   const badgeUserTarget = document.getElementById("badge-user-target");
   const badgeRoleSelect = document.getElementById("badge-role");
   const badgeUserId = document.getElementById("badge-user-id");
-  badgeTargetType?.addEventListener("change", () => {
+  const badgeForm = document.getElementById("badge-assignment");
+  const badgeSubmit = document.getElementById("badge-submit");
+  const badgeCancel = document.getElementById("badge-cancel-edit");
+  const badgeStartColor = document.getElementById("gradient-start");
+  const badgeEndColor = document.getElementById("gradient-end");
+  const badgeGradientEnabled = badgeForm?.querySelector('[name="gradient_enabled"]');
+  const editTargetType = badgeForm?.querySelector('[name="edit_target_type"]');
+  const editTargetId = badgeForm?.querySelector('[name="edit_target_id"]');
+  function syncBadgeTarget() {
     const useUserId = badgeTargetType.value === "user";
     badgeRoleTarget.hidden = useUserId;
     badgeUserTarget.hidden = !useUserId;
@@ -333,7 +352,35 @@
     badgeRoleSelect.required = !useUserId;
     badgeUserId.disabled = !useUserId;
     badgeUserId.required = useUserId;
+  }
+  badgeTargetType?.addEventListener("change", syncBadgeTarget);
+  document.querySelectorAll(".badge-edit[data-target-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      badgeForm.elements.target_type.value = button.dataset.targetType;
+      syncBadgeTarget();
+      if (button.dataset.targetType === "user") badgeUserId.value = button.dataset.targetId;
+      else badgeRoleSelect.value = button.dataset.targetId;
+      badgeForm.elements.badge_type.value = button.dataset.badgeType;
+      badgeStartColor.value = button.dataset.gradientStart;
+      badgeEndColor.value = button.dataset.gradientEnd;
+      badgeGradientEnabled.checked = button.dataset.gradientEnabled === "true";
+      editTargetType.value = button.dataset.targetType;
+      editTargetId.value = button.dataset.targetId;
+      badgeSubmit.textContent = "Save changes";
+      badgeCancel.hidden = false;
+      badgeForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   });
+  badgeCancel?.addEventListener("click", () => {
+    badgeForm.reset();
+    editTargetType.value = "";
+    editTargetId.value = "";
+    badgeTargetType.value = "role";
+    syncBadgeTarget();
+    badgeSubmit.textContent = "Save badge";
+    badgeCancel.hidden = true;
+  });
+  if (badgeTargetType) syncBadgeTarget();
 </script>
 
 <script type="application/json" id="gl-roles">{{ boost_roles|tojson }}</script>
