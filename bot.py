@@ -2376,21 +2376,36 @@ def users_purchase_remove():
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         if guild is None:
             return redirect(url_for("users_page", q=search, error="purchase_role_offline"))
-        member = get_bot_member(guild_id, member_id)
         role = guild.get_role(int(role_id))
-        if member is not None and role is not None and role in member.roles:
+        if role is not None:
             try:
-                _run_on_bot_loop(
-                    bot,
-                    member.remove_roles(role, atomic=False, reason="Shop purchase removed by an admin"),
-                    15,
-                )
+                member = _run_on_bot_loop(bot, guild.fetch_member(member_id), 10)
+            except discord.NotFound:
+                member = None
             except Exception:
                 log.exception(
-                    "Could not revoke shop role %s from member %s in guild %s while removing purchase %s.",
-                    role_id, member_id, guild_id, purchase.get("purchase_id", item_id),
+                    "Could not fetch member %s in guild %s before removing shop purchase %s.",
+                    member_id, guild_id, purchase.get("purchase_id", item_id),
                 )
                 return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+            if member is not None and role in member.roles:
+                try:
+                    _run_on_bot_loop(
+                        bot,
+                        member.remove_roles(role, atomic=False, reason="Shop purchase removed by an admin"),
+                        15,
+                    )
+                    verified = _run_on_bot_loop(bot, guild.fetch_member(member_id), 10)
+                    if role in verified.roles:
+                        raise RuntimeError("Discord still reports the purchased role after removal.")
+                except discord.NotFound:
+                    pass
+                except Exception:
+                    log.exception(
+                        "Could not revoke shop role %s from member %s in guild %s while removing purchase %s.",
+                        role_id, member_id, guild_id, purchase.get("purchase_id", item_id),
+                    )
+                    return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
 
     update = {"$pull": {"inventory": purchase_match}}
     if refund == "1":
@@ -3970,7 +3985,9 @@ class HalloweenBot(commands.Cog):
             await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
         await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         items = await db(get_shop_items_for_guild, interaction.guild.id, True)
-        member = interaction.user  # carries the member's current roles
+        member = await db(get_fresh_member, interaction.guild.id, interaction.user.id)
+        if member is None:
+            member = interaction.user
         view = OwnedShopView(interaction.user.id)
         summary = ["# 🛒 Halloween Candy Shop", f"<@{interaction.user.id}>, spend your 🍬 Candy below. Only you can use these buttons."]
         for item_data in items:
