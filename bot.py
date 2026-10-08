@@ -820,10 +820,11 @@ def bot_can_assign(guild, role):
     return True, None
 
 
-def _refund_purchase(guild_id, user_id, price, item_id, purchased_at):
+def _refund_purchase(guild_id, user_id, price, item_id, purchase_id):
+    purchase_match = {"item_id": item_id, "purchase_id": purchase_id}
     users.update_one({"guild_id": int(guild_id), "user_id": int(user_id)},
                      {"$inc": {"balance": price},
-                      "$pull": {"inventory": {"item_id": item_id, "purchased_at": purchased_at}}})
+                      "$pull": {"inventory": purchase_match}})
 
 
 def purchase_shop_item(guild_id, user_id, item_id):
@@ -850,9 +851,13 @@ def purchase_shop_item(guild_id, user_id, item_id):
             return "unavailable" if reason == "unassignable" else "permissions"
 
     purchased_at = now_utc()
+    purchase_id = secrets.token_urlsafe(12)
     inventory_entry = {"item_id": item["item_id"], "name": item.get("name", "Shop Item"),
                        "emoji": item.get("emoji", "🎃"), "description": item.get("description", ""),
-                       "price": price, "type": item.get("type", "custom"), "purchased_at": purchased_at}
+                       "price": price, "type": item.get("type", "custom"), "purchased_at": purchased_at,
+                       "purchase_id": purchase_id}
+    if role is not None:
+        inventory_entry["role_id"] = role.id
     charged = False
     try:
         result = users.find_one_and_update(
@@ -873,30 +878,31 @@ def purchase_shop_item(guild_id, user_id, item_id):
             except discord.Forbidden:
                 log.error("Discord refused the role (403): guild=%s user=%s role=%s (%s). Bot role must be above it and have Manage Roles.",
                           guild_id, user_id, role.id, role.name)
-                _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+                _refund_purchase(guild_id, user_id, price, item["item_id"], purchase_id)
                 return "permissions"
             except Exception:
                 log.exception("Shop role assignment failed: guild=%s user=%s role=%s (%s) item=%s",
                               guild_id, user_id, role.id, role.name, item.get("item_id"))
-                _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+                _refund_purchase(guild_id, user_id, price, item["item_id"], purchase_id)
                 return "assignment_failed"
             try:  # best-effort confirmation; a failed lookup must not undo a successful grant
                 verified = _run_on_bot_loop(bot, guild.fetch_member(int(user_id)), 10)
                 if role.id not in {r.id for r in verified.roles}:
                     log.error("Discord accepted add_roles but role %s is not on member %s.", role.id, user_id)
-                    _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+                    _refund_purchase(guild_id, user_id, price, item["item_id"], purchase_id)
                     return "assignment_failed"
             except Exception:
                 log.warning("Could not re-check member %s after granting role %s; trusting Discord's success.", user_id, role.id)
     except Exception:
         log.exception("Shop purchase failed")
         if charged:
-            _refund_purchase(guild_id, user_id, price, item["item_id"], purchased_at)
+            _refund_purchase(guild_id, user_id, price, item["item_id"], purchase_id)
         return "purchase_failed"
 
     try:
         log_activity("shop_purchase", user_id, member.name, guild_id, price,
-                     {"item_id": item["item_id"], "item": item.get("name"), "type": item.get("type", "custom")})
+                     {"item_id": item["item_id"], "item": item.get("name"),
+                      "purchase_id": purchase_id, "type": item.get("type", "custom")})
     except Exception:
         log.exception("Purchase succeeded but the activity log entry failed")
     return "success"
@@ -1443,6 +1449,7 @@ LOG_EVENTS = {
     "buy":                 ("shop", "🛒", "Shop Purchase", 0),
     "web_buy":             ("shop", "🛒", "Shop Purchase (Web)", 0),
     "shop_purchase":       ("shop", "🛒", "Shop Purchase", 0),
+    "shop_purchase_removed": ("shop", "🗑️", "Shop Purchase Removed", 0),
     "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
@@ -1459,7 +1466,9 @@ DETAIL_LABELS = {
     "changed_by": "Changed by", "recipient_id": "Recipient", "boost_role": "Boost role",
     "role_id": "Role", "role_name": "Role name", "control": "Control", "level": "Level",
     "trick_or_treat_min": "Trick-or-treat min", "trick_or_treat_max": "Trick-or-treat max",
-    "daily_reward": "Daily reward", "rule_count": "Rules",
+    "daily_reward": "Daily reward", "rule_count": "Rules", "item": "Item",
+    "item_id": "Item ID", "purchase_id": "Purchase ID", "refunded": "Refunded",
+    "removed_by": "Removed by",
 }
 DETAIL_HIDDEN = {"source_bot_id", "test", "recipient"}
 SOURCE_LABELS = {"web_users": "Web dashboard (Users)", "web_daily": "Web dashboard (Daily)"}
@@ -1894,7 +1903,7 @@ def economy_page():
     try:
         total_users = users.count_documents({})
         total_candy = sum((doc.get("balance", 0) or 0) for doc in users.find({}, {"balance": 1}))
-        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy", "shop_purchase"]}}).sort("created_at", -1).limit(12))
+        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy", "shop_purchase", "shop_purchase_removed"]}}).sort("created_at", -1).limit(12))
     except PyMongoError:
         total_users, total_candy, recent = 0, 0, []
     return render_template("economy.html", config=config, total_users=total_users, total_candy=total_candy, recent=recent)
@@ -2232,6 +2241,17 @@ def users_page():
             )
             record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
             record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
+            record["purchases"] = []
+            for purchase in record.get("inventory", []) or []:
+                if not isinstance(purchase, dict):
+                    continue
+                purchase = dict(purchase)
+                purchased_at = purchase.get("purchased_at")
+                purchase["purchase_timestamp_ms"] = (
+                    int(as_utc(purchased_at).timestamp() * 1000)
+                    if isinstance(purchased_at, datetime) else None
+                )
+                record["purchases"].append(purchase)
 
     return render_template(
         "users.html",
@@ -2296,6 +2316,110 @@ def users_candy():
         return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
     except (TypeError, ValueError):
         return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+
+
+@app.post("/users/purchase/remove")
+def users_purchase_remove():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    search = request.form.get("q", "")
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_id = int(request.form.get("member_id", ""))
+        item_id = request.form.get("item_id", "").strip()
+        purchase_id = request.form.get("purchase_id", "").strip()
+        refund = request.form.get("refund", "")
+        if not item_id or refund not in {"0", "1"}:
+            raise ValueError
+        if purchase_id:
+            purchase_match = {"item_id": item_id, "purchase_id": purchase_id}
+            purchased_at_ms = None
+        else:
+            purchased_at_ms = int(request.form.get("purchased_at_ms", ""))
+            purchase_match = {
+                "item_id": item_id,
+                "purchased_at": datetime.fromtimestamp(purchased_at_ms / 1000, timezone.utc),
+            }
+    except (TypeError, ValueError, OverflowError):
+        return redirect(url_for("users_page", q=search, error="invalid"))
+
+    member_record = users.find_one({"guild_id": guild_id, "user_id": member_id})
+    if purchase_id:
+        purchase = next(
+            (entry for entry in (member_record or {}).get("inventory", [])
+             if isinstance(entry, dict) and all(entry.get(key) == value for key, value in purchase_match.items())),
+            None,
+        )
+    else:
+        purchase = next(
+            (entry for entry in (member_record or {}).get("inventory", [])
+             if isinstance(entry, dict)
+             and entry.get("item_id") == item_id
+             and isinstance(entry.get("purchased_at"), datetime)
+             and int(as_utc(entry["purchased_at"]).timestamp() * 1000) == purchased_at_ms),
+            None,
+        )
+    if purchase is None:
+        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+
+    price = int(purchase.get("price", 0) or 0)
+    if price < 0:
+        return redirect(url_for("users_page", q=search, error="invalid"))
+
+    role_id = purchase.get("role_id")
+    if purchase.get("type") == "role" and not role_id:
+        current_shop_item = shop_items.find_one({"guild_id": guild_id, "item_id": item_id})
+        role_id = (current_shop_item or {}).get("reward", {}).get("role_id")
+    if role_id:
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None:
+            return redirect(url_for("users_page", q=search, error="purchase_role_offline"))
+        member = get_bot_member(guild_id, member_id)
+        role = guild.get_role(int(role_id))
+        if member is not None and role is not None and role in member.roles:
+            try:
+                _run_on_bot_loop(
+                    bot,
+                    member.remove_roles(role, atomic=False, reason="Shop purchase removed by an admin"),
+                    15,
+                )
+            except Exception:
+                log.exception(
+                    "Could not revoke shop role %s from member %s in guild %s while removing purchase %s.",
+                    role_id, member_id, guild_id, purchase.get("purchase_id", item_id),
+                )
+                return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+
+    update = {"$pull": {"inventory": purchase_match}}
+    if refund == "1":
+        update["$inc"] = {"balance": price}
+    updated = users.find_one_and_update(
+        {"guild_id": guild_id, "user_id": member_id, "inventory": {"$elemMatch": purchase_match}},
+        update,
+        return_document=ReturnDocument.AFTER,
+    )
+    if updated is None:
+        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+
+    log_activity(
+        "shop_purchase_removed",
+        user_id=member_id,
+        username=member_record.get("username"),
+        guild_id=guild_id,
+        amount=price if refund == "1" else 0,
+        details={
+            "item_id": item_id,
+            "item": purchase.get("name", "Shop Item"),
+            "purchase_id": purchase.get("purchase_id"),
+            "refunded": refund == "1",
+            "removed_by": int(user["id"]),
+        },
+    )
+    if refund == "1" and price:
+        notify_candy_change_from_web(guild_id, member_id, "add", price, updated["balance"], user)
+    return redirect(url_for("users_page", q=search, saved="purchase_refunded" if refund == "1" else "purchase_removed"))
 
 
 @app.post("/users/control")
