@@ -56,6 +56,7 @@ daily_boosts = db["daily_boosts"]
 give_limits = db["give_limits"]
 trick_cooldowns = db["trick_cooldowns"]
 shop_items = db["shop_items"]
+trivia_questions = db["trivia_questions"]
 role_shop_items = db["role_shop_items"]
 role_shop_claims = db["role_shop_claims"]
 presentation_settings = db["presentation_settings"]
@@ -915,6 +916,162 @@ SHOP_RESULT_MESSAGES = {
 }
 
 
+def trivia_result_view(result, question, reward=None, balance=None):
+    ui = discord.ui
+    if result == "correct":
+        text = (
+            f"## ✅ Correct answer!\nYou earned **{int(reward):,} 🍬** for this question.\n"
+            f"**New balance:** {int(balance):,} 🍬"
+        )
+        color = 0x22C55E
+    elif result == "already_claimed":
+        text = "## 🎃 Reward already claimed\nYou already earned Candy for this question."
+        color = 0xF59E0B
+    elif result == "incorrect":
+        text = "## ❌ Not quite\nThat answer did not match. Try another trivia question!"
+        color = 0xEF4444
+    else:
+        text = "## ⚠️ Question unavailable\nThis trivia question is no longer active."
+        color = 0xEF4444
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(
+        ui.TextDisplay(f"{text}\n\n-# {question.get('question','Trivia')}"),
+        accent_colour=color,
+    ))
+    return view
+
+
+async def complete_trivia_attempt(interaction, question_id, answer_index=None, answer_text=None):
+    guild = interaction.guild
+    if guild is None:
+        return "unavailable", None, None
+    controls = await db(get_member_controls, guild.id, interaction.user.id)
+    if controls["blocked_from_candy"]:
+        return "blocked", None, None
+    question = await db(
+        trivia_questions.find_one,
+        {"question_id": str(question_id), "enabled": True},
+    )
+    result, balance = await db(
+        resolve_trivia_answer,
+        guild.id,
+        interaction.user.id,
+        question_id,
+        answer_index,
+        answer_text,
+    )
+    if result == "correct" and question:
+        await db(
+            log_activity,
+            "trivia_reward",
+            interaction.user.id,
+            interaction.user.name,
+            guild.id,
+            int(question.get("reward", 0)),
+            {"question_id": str(question_id), "question": question.get("question", "")},
+        )
+    return result, balance, question
+
+
+class TriviaAnswerModal(discord.ui.Modal):
+    def __init__(self, owner_id, question):
+        super().__init__(title="Answer Trivia")
+        self.owner_id = int(owner_id)
+        self.question_id = str(question["question_id"])
+        self.reward = int(question.get("reward", 0))
+        self.question_text = str(question.get("question", "Trivia question"))
+        text_style = (
+            discord.TextStyle.paragraph
+            if question.get("question_type") == "long" else discord.TextStyle.short
+        )
+        self.answer_input = discord.ui.TextInput(
+            label="Your answer",
+            placeholder="Type your answer here",
+            style=text_style,
+            min_length=1,
+            max_length=1000 if text_style == discord.TextStyle.paragraph else 200,
+        )
+        self.add_item(self.answer_input)
+
+    async def on_submit(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                ephemeral=True,
+            )
+            return
+        result, balance, question = await complete_trivia_attempt(
+            interaction, self.question_id, answer_text=self.answer_input.value,
+        )
+        if result == "blocked":
+            view = candy_notice_view("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server.")
+        else:
+            view = trivia_result_view(result, question or {"question": self.question_text}, self.reward, balance)
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+
+def trivia_question_view(owner_id, question):
+    ui = discord.ui
+    view = ui.LayoutView(timeout=600)
+    question_type = question.get("question_type")
+    title = "Multiple choice" if question_type == "multiple_choice" else (
+        "Short response" if question_type == "short" else "Long response"
+    )
+    text = (
+        f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
+        f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
+        "-# Each question can award Candy once per member."
+    )
+    components = [ui.TextDisplay(text)]
+    if question_type == "multiple_choice":
+        for start in range(0, len(question.get("options", [])), 5):
+            row = ui.ActionRow()
+            for index, option in enumerate(question["options"][start:start + 5], start=start):
+                button = ui.Button(label=option[:80], style=discord.ButtonStyle.secondary)
+
+                async def callback(button_interaction, selected_index=index):
+                    if button_interaction.user.id != int(owner_id):
+                        await button_interaction.response.send_message(
+                            view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                            ephemeral=True,
+                        )
+                        return
+                    result, balance, current_question = await complete_trivia_attempt(
+                        button_interaction, question["question_id"], answer_index=selected_index,
+                    )
+                    if result == "blocked":
+                        result_view = candy_notice_view(
+                            "🚫 Not allowed",
+                            "You are not allowed to participate in Candy activities in this server.",
+                        )
+                    else:
+                        result_view = trivia_result_view(
+                            result, current_question or question,
+                            question.get("reward"), balance,
+                        )
+                    await button_interaction.response.edit_message(view=result_view)
+
+                button.callback = callback
+                row.add_item(button)
+            components.append(row)
+    else:
+        button = ui.Button(label="Write your answer", style=discord.ButtonStyle.primary)
+
+        async def open_answer_modal(button_interaction):
+            if button_interaction.user.id != int(owner_id):
+                await button_interaction.response.send_message(
+                    view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                    ephemeral=True,
+                )
+                return
+            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question))
+
+        button.callback = open_answer_modal
+        components.append(ui.ActionRow(button))
+    view.add_item(ui.Container(*components, accent_colour=0x7C3AED))
+    return view
+
+
 def _run_on_bot_loop(bot, coro, timeout):
     return asyncio.run_coroutine_threadsafe(coro, bot.loop).result(timeout=timeout)
 
@@ -1287,6 +1444,54 @@ def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max):
     )
 
 
+def normalize_trivia_answer(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def trivia_answer_matches(answer, accepted_answers):
+    normalized_answer = normalize_trivia_answer(answer)
+    if not normalized_answer:
+        return False
+    for accepted in accepted_answers:
+        normalized_accepted = normalize_trivia_answer(accepted)
+        if not normalized_accepted:
+            continue
+        if normalized_accepted in normalized_answer:
+            return True
+        if len(normalized_answer) >= 3 and normalized_answer in normalized_accepted:
+            return True
+    return False
+
+
+def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, answer_text=None):
+    question = trivia_questions.find_one({"question_id": str(question_id), "enabled": True})
+    if question is None:
+        return "unavailable", None
+    question_type = question.get("question_type")
+    if question_type == "multiple_choice":
+        try:
+            correct = int(answer_index) == int(question.get("correct_index", -1))
+        except (TypeError, ValueError):
+            correct = False
+    else:
+        correct = trivia_answer_matches(answer_text, question.get("accepted_answers", []))
+    if not correct:
+        return "incorrect", None
+
+    reward = int(question.get("reward", 0))
+    updated = users.find_one_and_update(
+        {"guild_id": int(guild_id), "user_id": int(user_id), "trivia_claims": {"$ne": str(question_id)}},
+        {"$inc": {"balance": reward}, "$addToSet": {"trivia_claims": str(question_id)}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if updated is None:
+        record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)})
+        if record and str(question_id) in record.get("trivia_claims", []):
+            return "already_claimed", int(record.get("balance", 0))
+        return "unavailable", None
+    return "correct", int(updated.get("balance", 0))
+
+
 def get_member_controls(guild_id, user_id):
     record = member_controls.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) or {}
     return {"blocked_from_candy": bool(record.get("blocked_from_candy", False)), "leaderboard_excluded": bool(record.get("leaderboard_excluded", False))}
@@ -1582,6 +1787,9 @@ LOG_EVENTS = {
     "web_buy":             ("shop", "🛒", "Shop Purchase (Web)", 0),
     "shop_purchase":       ("shop", "🛒", "Shop Purchase", 0),
     "shop_purchase_removed": ("shop", "🗑️", "Shop Purchase Removed", 0),
+    "trivia_reward":        ("economy", "🧠", "Trivia Reward", +1),
+    "trivia_question_saved": ("admin", "🧠", "Trivia Question Saved", 0),
+    "trivia_question_removed": ("admin", "🗑️", "Trivia Question Removed", 0),
     "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
@@ -1600,7 +1808,9 @@ DETAIL_LABELS = {
     "trick_or_treat_min": "Trick-or-treat min", "trick_or_treat_max": "Trick-or-treat max",
     "daily_reward": "Daily reward", "rule_count": "Rules", "item": "Item",
     "item_id": "Item ID", "purchase_id": "Purchase ID", "refunded": "Refunded",
-    "removed_by": "Removed by",
+    "removed_by": "Removed by", "question_id": "Question ID", "question_type": "Question type",
+    "reward": "Candy reward", "question": "Question", "source": "Source",
+    "role_removed": "Role removed",
 }
 DETAIL_HIDDEN = {"source_bot_id", "test", "recipient"}
 SOURCE_LABELS = {"web_users": "Web dashboard (Users)", "web_daily": "Web dashboard (Daily)"}
@@ -2032,13 +2242,19 @@ def economy_page():
     if not is_admin(user["id"]):
         return "Forbidden", 403
     config = get_economy_config()
+    question_id = request.args.get("edit_trivia", "").strip()
+    edit_trivia = trivia_questions.find_one({"question_id": question_id}) if question_id else None
+    trivia_listing = list(trivia_questions.find({}).sort("created_at", -1))
     try:
         total_users = users.count_documents({})
         total_candy = sum((doc.get("balance", 0) or 0) for doc in users.find({}, {"balance": 1}))
-        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy", "shop_purchase", "shop_purchase_removed"]}}).sort("created_at", -1).limit(12))
+        recent = list(activity_logs.find({"action": {"$in": ["daily", "trick_or_treat", "give", "buy", "web_buy", "shop_purchase", "shop_purchase_removed", "trivia_reward"]}}).sort("created_at", -1).limit(12))
     except PyMongoError:
         total_users, total_candy, recent = 0, 0, []
-    return render_template("economy.html", config=config, total_users=total_users, total_candy=total_candy, recent=recent)
+    return render_template(
+        "economy.html", config=config, total_users=total_users, total_candy=total_candy,
+        recent=recent, trivia_questions=trivia_listing, edit_trivia=edit_trivia,
+    )
 
 @app.post("/economy/settings")
 def economy_settings():
@@ -2058,6 +2274,122 @@ def economy_settings():
     set_economy_config(daily_reward, minimum, maximum)
     log_activity("economy_settings", user_id=user["id"], username=user.get("username"), details={"daily_reward": daily_reward, "trick_or_treat_min": minimum, "trick_or_treat_max": maximum})
     return redirect(url_for("economy_page", saved="1"))
+
+
+@app.post("/economy/trivia/save")
+def economy_trivia_save():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    question_id = request.form.get("question_id", "").strip()
+    try:
+        question = request.form.get("question", "").strip()
+        question_type = request.form.get("question_type", "").strip()
+        reward = int(request.form.get("reward", "0"))
+        options = [line.strip() for line in request.form.get("options", "").splitlines() if line.strip()]
+        accepted_answers = list(dict.fromkeys(
+            line.strip() for line in request.form.get("accepted_answers", "").splitlines() if line.strip()
+        ))
+        if not question or len(question) > 1000 or reward < 1 or reward > 1000000:
+            raise ValueError
+        if question_type == "multiple_choice":
+            if len(options) < 2 or len(options) > 5 or any(len(option) > 100 for option in options):
+                raise ValueError
+            correct_answer = normalize_trivia_answer(request.form.get("correct_answer", ""))
+            correct_index = next(
+                (index for index, option in enumerate(options)
+                 if normalize_trivia_answer(option) == correct_answer),
+                None,
+            )
+            if correct_index is None or len(set(normalize_trivia_answer(option) for option in options)) != len(options):
+                raise ValueError
+            accepted_answers = []
+        elif question_type in {"short", "long"}:
+            if not accepted_answers or len(accepted_answers) > 20 or any(len(answer) > 200 for answer in accepted_answers):
+                raise ValueError
+            options = []
+            correct_index = None
+        else:
+            raise ValueError
+        question_data = {
+            "question": question,
+            "question_type": question_type,
+            "options": options,
+            "correct_index": correct_index,
+            "accepted_answers": accepted_answers,
+            "reward": reward,
+            "updated_at": now_utc(),
+            "updated_by": int(user["id"]),
+        }
+        if question_id:
+            result = trivia_questions.update_one(
+                {"question_id": question_id},
+                {"$set": question_data},
+            )
+            if not result.matched_count:
+                return redirect(url_for("economy_page", error="trivia_not_found"))
+        else:
+            question_id = secrets.token_urlsafe(10)
+            trivia_questions.insert_one({
+                "question_id": question_id,
+                "enabled": True,
+                "created_at": now_utc(),
+                **question_data,
+            })
+    except (KeyError, TypeError, ValueError):
+        return redirect(url_for("economy_page", error="trivia_invalid"))
+    log_activity(
+        "trivia_question_saved",
+        user_id=user["id"],
+        username=user.get("username"),
+        details={"question_id": question_id, "question_type": question_type, "reward": reward},
+    )
+    return redirect(url_for("economy_page", trivia_saved="1"))
+
+
+@app.post("/economy/trivia/toggle")
+def economy_trivia_toggle():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    question_id = request.form.get("question_id", "").strip()
+    enabled_value = request.form.get("enabled")
+    if not question_id or enabled_value not in {"0", "1"}:
+        return redirect(url_for("economy_page", error="trivia_invalid"))
+    result = trivia_questions.update_one(
+        {"question_id": question_id},
+        {"$set": {"enabled": enabled_value == "1", "updated_at": now_utc(), "updated_by": int(user["id"])}},
+    )
+    if not result.matched_count:
+        return redirect(url_for("economy_page", error="trivia_not_found"))
+    return redirect(url_for("economy_page", trivia_saved="1"))
+
+
+@app.post("/economy/trivia/remove")
+def economy_trivia_remove():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    question_id = request.form.get("question_id", "").strip()
+    if not question_id:
+        return redirect(url_for("economy_page", error="trivia_invalid"))
+    result = trivia_questions.delete_one({"question_id": question_id})
+    if not result.deleted_count:
+        return redirect(url_for("economy_page", error="trivia_not_found"))
+    users.update_many({}, {"$pull": {"trivia_claims": question_id}})
+    log_activity(
+        "trivia_question_removed",
+        user_id=user["id"],
+        username=user.get("username"),
+        details={"question_id": question_id},
+    )
+    return redirect(url_for("economy_page", trivia_saved="1"))
 
 
 def _logging_flash(kind, text):
@@ -3389,6 +3721,7 @@ def ensure_user(guild_id: int, user_id: int, username=None, display_name=None):
             "user_id": user_id,
             "balance": 0,
             "inventory": [],
+            "trivia_claims": [],
             "created_at": now_utc(),
         }
     }
@@ -3884,6 +4217,55 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(
             view=balance_candy_view(target, user["balance"], interaction.guild.name),
             allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="trivia", description="Answer a trivia question to earn Candy.")
+    async def trivia(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "Trivia can only be played in a server."),
+                ephemeral=True,
+            )
+            return
+        guild_id = interaction.guild.id
+        user_id = interaction.user.id
+        controls = await db(get_member_controls, guild_id, user_id)
+        if controls["blocked_from_candy"]:
+            await interaction.response.send_message(
+                view=candy_notice_view(
+                    "🚫 Not allowed",
+                    "You are not allowed to participate in Candy activities in this server.",
+                ),
+                ephemeral=True,
+            )
+            return
+        member_record = await db(
+            ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name,
+        )
+        questions = await db(lambda: list(trivia_questions.find({"enabled": True})))
+        if not questions:
+            await interaction.response.send_message(
+                view=candy_notice_view("🧠 No trivia yet", "There are no active trivia questions right now."),
+                ephemeral=True,
+            )
+            return
+        claimed = set(member_record.get("trivia_claims") or [])
+        available = [question for question in questions if question.get("question_id") not in claimed]
+        if not available:
+            await interaction.response.send_message(
+                view=candy_notice_view(
+                    "🎉 All caught up",
+                    "You have already earned Candy for every active trivia question.",
+                    ok=True,
+                ),
+                ephemeral=True,
+            )
+            return
+        question = random.choice(available)
+        await interaction.response.send_message(
+            view=trivia_question_view(user_id, question),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @app_commands.command(name="daily", description="Claim your daily Candy reward.")
     async def daily(self, interaction: discord.Interaction):
