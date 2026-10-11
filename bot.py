@@ -1255,6 +1255,9 @@ ARCANE_LEVEL_PATTERN = re.compile(
 
 TRICK_OR_TREAT_MIN = 25
 TRICK_OR_TREAT_MAX = 150
+MAX_TRICK_JACKPOT_ENTRIES = 20
+MAX_TRICK_JACKPOT_ODDS = 1_000_000_000
+MAX_TRICK_JACKPOT_REWARD = 1_000_000_000
 
 
 def is_admin(user_id):
@@ -1413,26 +1416,52 @@ def public_base_url():
 
 def get_economy_config():
     record = economy_config.find_one({"_id": "global"}) or {}
+    jackpots = []
+    saved_jackpots = record.get("trick_or_treat_jackpots", [])
+    if not isinstance(saved_jackpots, list):
+        saved_jackpots = []
+    for item in saved_jackpots:
+        if not isinstance(item, dict):
+            continue
+        try:
+            odds = int(item.get("odds", 0))
+            reward = int(item.get("reward", 0))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= odds <= MAX_TRICK_JACKPOT_ODDS and 1 <= reward <= MAX_TRICK_JACKPOT_REWARD:
+            jackpots.append({"odds": odds, "reward": reward})
     return {
         "daily_reward": int(record.get("daily_reward", DAILY_REWARD)),
         "trick_or_treat_min": int(record.get("trick_or_treat_min", TRICK_OR_TREAT_MIN)),
         "trick_or_treat_max": int(record.get("trick_or_treat_max", TRICK_OR_TREAT_MAX)),
+        "trick_or_treat_jackpots": jackpots[:MAX_TRICK_JACKPOT_ENTRIES],
         "trivia_looping": bool(record.get("trivia_looping", False)),
         "trivia_shuffle": bool(record.get("trivia_shuffle", True)),
     }
 
 
-def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max):
+def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max, trick_or_treat_jackpots):
     economy_config.update_one(
         {"_id": "global"},
         {"$set": {
             "daily_reward": int(daily_reward),
             "trick_or_treat_min": int(trick_or_treat_min),
             "trick_or_treat_max": int(trick_or_treat_max),
+            "trick_or_treat_jackpots": trick_or_treat_jackpots,
             "updated_at": now_utc(),
         }},
         upsert=True,
     )
+
+
+def roll_trick_or_treat_jackpots(jackpots):
+    """Independently roll each configured jackpot; return the total and every prize won."""
+    wins = [
+        {"odds": int(jackpot["odds"]), "reward": int(jackpot["reward"])}
+        for jackpot in jackpots
+        if random.randint(1, int(jackpot["odds"])) == 1
+    ]
+    return sum(jackpot["reward"] for jackpot in wins), wins
 
 
 def normalize_trivia_answer(value):
@@ -2314,10 +2343,37 @@ def economy_settings():
         maximum = int(request.form.get("trick_or_treat_max", TRICK_OR_TREAT_MAX))
         if daily_reward < 1 or minimum < 1 or maximum < minimum or maximum > 1000000:
             raise ValueError
+        odds_values = request.form.getlist("trick_jackpot_odds")
+        reward_values = request.form.getlist("trick_jackpot_reward")
+        if len(odds_values) != len(reward_values) or len(odds_values) > MAX_TRICK_JACKPOT_ENTRIES:
+            raise ValueError
+        jackpots = []
+        for odds_value, reward_value in zip(odds_values, reward_values):
+            odds_value = odds_value.strip()
+            reward_value = reward_value.strip()
+            if not odds_value and not reward_value:
+                continue
+            odds = int(odds_value)
+            reward = int(reward_value)
+            if not 1 <= odds <= MAX_TRICK_JACKPOT_ODDS:
+                raise ValueError
+            if not 1 <= reward <= MAX_TRICK_JACKPOT_REWARD:
+                raise ValueError
+            jackpots.append({"odds": odds, "reward": reward})
     except (TypeError, ValueError):
         return redirect(url_for("economy_page", error="invalid"))
-    set_economy_config(daily_reward, minimum, maximum)
-    log_activity("economy_settings", user_id=user["id"], username=user.get("username"), details={"daily_reward": daily_reward, "trick_or_treat_min": minimum, "trick_or_treat_max": maximum})
+    set_economy_config(daily_reward, minimum, maximum, jackpots)
+    log_activity(
+        "economy_settings",
+        user_id=user["id"],
+        username=user.get("username"),
+        details={
+            "daily_reward": daily_reward,
+            "trick_or_treat_min": minimum,
+            "trick_or_treat_max": maximum,
+            "trick_or_treat_jackpot_count": len(jackpots),
+        },
+    )
     return redirect(url_for("economy_page", saved="1"))
 
 
@@ -3999,13 +4055,19 @@ TRICK_OR_TREAT_LINES = (
 )
 
 
-def trick_or_treat_view(member, reward, new_balance, next_at):
+def trick_or_treat_view(member, reward, new_balance, next_at, jackpot_rewards=None):
     """Components V2 card for a successful /trickortreat."""
     ui = discord.ui
+    jackpot_rewards = jackpot_rewards or []
+    jackpot_text = "".join(
+        f"\n🎉 Jackpot! +{int(prize['reward']):,} 🍬 (**1 in {int(prize['odds']):,}**)"
+        for prize in jackpot_rewards
+    )
+    base_reward = int(reward) - sum(int(prize["reward"]) for prize in jackpot_rewards)
     head = (
         "## 🎃 Trick or Treat!\n"
         f"{random.choice(TRICK_OR_TREAT_LINES)}\n"
-        f"**Found:** +{int(reward):,} 🍬\n"
+        f"**Found:** +{base_reward:,} 🍬{jackpot_text}\n"
         f"**New balance:** {int(new_balance):,} 🍬"
     )
     items = [
@@ -4466,7 +4528,9 @@ class HalloweenBot(commands.Cog):
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
-        reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
+        base_reward = random.randint(config["trick_or_treat_min"], config["trick_or_treat_max"])
+        jackpot_bonus, jackpot_wins = roll_trick_or_treat_jackpots(config["trick_or_treat_jackpots"])
+        reward = base_reward + jackpot_bonus
         updated = await db(
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
@@ -4483,9 +4547,23 @@ class HalloweenBot(commands.Cog):
                 view=notice("🏠 No more Candy yet", f"The neighbours are out of treats. Try again <t:{int((last + timedelta(seconds=cooldown)).timestamp())}:R>."),
                 ephemeral=True)
             return
-        await db(log_activity, "trick_or_treat", interaction.user.id, interaction.user.name, guild_id, reward)
+        await db(
+            log_activity,
+            "trick_or_treat",
+            interaction.user.id,
+            interaction.user.name,
+            guild_id,
+            reward,
+            {"base_reward": base_reward, "jackpots": jackpot_wins} if jackpot_wins else None,
+        )
         await interaction.response.send_message(
-            view=trick_or_treat_view(interaction.user, reward, updated["balance"], now + timedelta(seconds=cooldown)),
+            view=trick_or_treat_view(
+                interaction.user,
+                reward,
+                updated["balance"],
+                now + timedelta(seconds=cooldown),
+                jackpot_wins,
+            ),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="add", description="Admin: add Candy to a member's balance.")

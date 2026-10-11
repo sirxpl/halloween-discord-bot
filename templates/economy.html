@@ -19,6 +19,11 @@
     .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
     .form-grid label,.field-label{display:block;color:#c9c3d8;font-size:13px}
     .form-grid input,.field,.form-grid select{width:100%;box-sizing:border-box;margin-top:7px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white;font:inherit}
+    .jackpot-row{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr)) auto;gap:12px;align-items:end;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+    .jackpot-row label{display:block;color:#c9c3d8;font-size:13px}
+    .jackpot-row input{width:100%;box-sizing:border-box;margin-top:7px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white;font:inherit}
+    .jackpot-row .button{margin:7px 0 0}
+    .jackpot-empty{color:#aaa2b9;font-size:13px}
     .field{min-height:44px}
     textarea.field{min-height:100px;resize:vertical}
     .button{margin-top:14px;padding:11px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;cursor:pointer;text-decoration:none;display:inline-block}
@@ -70,7 +75,7 @@
   {% elif request.args.get('error') == 'trivia_not_found' %}
   <div class="notice error">That trivia question could not be found. Refresh and try again.</div>
   {% elif request.args.get('error') %}
-  <div class="notice error">Please check the economy settings and try again.</div>
+  <div class="notice error">Please check the economy values and jackpot odds/rewards, then try again.</div>
   {% endif %}
 
   <section class="card" style="margin-top:20px">
@@ -176,6 +181,22 @@
         <label>Trick-or-treat minimum<input type="number" name="trick_or_treat_min" min="1" value="{{ config.trick_or_treat_min }}"></label>
         <label>Trick-or-treat maximum<input type="number" name="trick_or_treat_max" min="1" value="{{ config.trick_or_treat_max }}"></label>
       </div>
+      <div class="subcard">
+        <h3>🎉 Trick-or-treat jackpots</h3>
+        <p class="muted">Each entry is rolled independently on every successful trick-or-treat. Won jackpots are added to the normal reward. For example, odds <strong>1000</strong> and bonus <strong>1000</strong> means a 1-in-1000 chance to win an extra 1,000 Candy. Up to 20 entries; odds and rewards can each be from 1 to 1,000,000,000.</p>
+        <div id="jackpot-rows" data-max-rows="20">
+          {% for jackpot in config.trick_or_treat_jackpots %}
+          <div class="jackpot-row">
+            <label>Chance (1 in)<input type="number" name="trick_jackpot_odds" min="1" max="1000000000" value="{{ jackpot.odds }}" required></label>
+            <label>Extra Candy<input type="number" name="trick_jackpot_reward" min="1" max="1000000000" value="{{ jackpot.reward }}" required></label>
+            <button class="button danger remove-jackpot" type="button">Remove</button>
+          </div>
+          {% else %}
+          <p class="jackpot-empty">No jackpot rewards configured.</p>
+          {% endfor %}
+        </div>
+        <button class="button alt" id="add-jackpot" type="button">Add jackpot</button>
+      </div>
       <button class="button" type="submit">Save economy settings</button>
     </form>
   </section>
@@ -222,6 +243,33 @@
   };
   type.addEventListener("change", updateTypeFields);
   updateTypeFields();
+
+  const jackpotRows = document.getElementById("jackpot-rows");
+  const addJackpot = document.getElementById("add-jackpot");
+  const updateJackpotControls = () => {
+    addJackpot.disabled = jackpotRows.querySelectorAll(".jackpot-row").length >= Number(jackpotRows.dataset.maxRows);
+  };
+  jackpotRows.addEventListener("click", (event) => {
+    if (event.target.closest(".remove-jackpot")) {
+      event.target.closest(".jackpot-row").remove();
+      if (!jackpotRows.querySelector(".jackpot-row")) {
+        const empty = document.createElement("p");
+        empty.className = "jackpot-empty";
+        empty.textContent = "No jackpot rewards configured.";
+        jackpotRows.append(empty);
+      }
+      updateJackpotControls();
+    }
+  });
+  addJackpot.addEventListener("click", () => {
+    jackpotRows.querySelector(".jackpot-empty")?.remove();
+    const row = document.createElement("div");
+    row.className = "jackpot-row";
+    row.innerHTML = '<label>Chance (1 in)<input type="number" name="trick_jackpot_odds" min="1" max="1000000000" required></label><label>Extra Candy<input type="number" name="trick_jackpot_reward" min="1" max="1000000000" required></label><button class="button danger remove-jackpot" type="button">Remove</button>';
+    jackpotRows.append(row);
+    updateJackpotControls();
+  });
+  updateJackpotControls();
 })();
 </script>
 </body>
