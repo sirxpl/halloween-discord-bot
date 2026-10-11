@@ -927,9 +927,6 @@ def trivia_result_view(result, question, reward=None, balance=None):
     elif result == "already_claimed":
         text = "## 🎃 Reward already claimed\nYou already earned Candy for this question."
         color = 0xF59E0B
-    elif result == "stale_round":
-        text = "## 🔄 This trivia round expired\nRun **/trivia** to start the current round."
-        color = 0xF59E0B
     elif result == "incorrect":
         text = "## ❌ Not quite\nThat answer did not match. Try another trivia question!"
         color = 0xEF4444
@@ -944,7 +941,7 @@ def trivia_result_view(result, question, reward=None, balance=None):
     return view
 
 
-async def complete_trivia_attempt(interaction, question_id, cycle=0, answer_index=None, answer_text=None):
+async def complete_trivia_attempt(interaction, question_id, answer_index=None, answer_text=None):
     guild = interaction.guild
     if guild is None:
         return "unavailable", None, None
@@ -960,7 +957,6 @@ async def complete_trivia_attempt(interaction, question_id, cycle=0, answer_inde
         guild.id,
         interaction.user.id,
         question_id,
-        cycle,
         answer_index,
         answer_text,
     )
@@ -978,11 +974,10 @@ async def complete_trivia_attempt(interaction, question_id, cycle=0, answer_inde
 
 
 class TriviaAnswerModal(discord.ui.Modal):
-    def __init__(self, owner_id, question, cycle=0):
+    def __init__(self, owner_id, question):
         super().__init__(title="Answer Trivia")
         self.owner_id = int(owner_id)
         self.question_id = str(question["question_id"])
-        self.cycle = int(cycle)
         self.reward = int(question.get("reward", 0))
         self.question_text = str(question.get("question", "Trivia question"))
         text_style = (
@@ -1009,8 +1004,7 @@ class TriviaAnswerModal(discord.ui.Modal):
             )
             return
         result, balance, question = await complete_trivia_attempt(
-            interaction, self.question_id, cycle=self.cycle,
-            answer_text=self.answer_input.value,
+            interaction, self.question_id, answer_text=self.answer_input.value,
         )
         if result == "blocked":
             view = candy_notice_view("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server.")
@@ -1019,7 +1013,7 @@ class TriviaAnswerModal(discord.ui.Modal):
         await interaction.response.send_message(view=view, ephemeral=True)
 
 
-def trivia_question_view(owner_id, question, cycle=0):
+def trivia_question_view(owner_id, question):
     ui = discord.ui
     view = ui.LayoutView(timeout=600)
     question_type = question.get("question_type")
@@ -1030,7 +1024,7 @@ def trivia_question_view(owner_id, question, cycle=0):
         f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
         f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
         "-# Public trivia round • only the starter can answer here. Run **/trivia** to start your own.\n"
-        "-# Each question can award Candy once per member."
+        "-# Each question can award Candy once per member in each reward cycle."
     )
     components = [ui.TextDisplay(text)]
     if question_type == "multiple_choice":
@@ -1050,8 +1044,7 @@ def trivia_question_view(owner_id, question, cycle=0):
                         )
                         return
                     result, balance, current_question = await complete_trivia_attempt(
-                        button_interaction, question["question_id"], cycle=cycle,
-                        answer_index=selected_index,
+                        button_interaction, question["question_id"], answer_index=selected_index,
                     )
                     if result == "blocked":
                         result_view = candy_notice_view(
@@ -1081,7 +1074,7 @@ def trivia_question_view(owner_id, question, cycle=0):
                     ephemeral=True,
                 )
                 return
-            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question, cycle))
+            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question))
 
         button.callback = open_answer_modal
         components.append(ui.ActionRow(button))
@@ -1482,7 +1475,7 @@ def trivia_answer_matches(answer, accepted_answers):
     return False
 
 
-def resolve_trivia_answer(guild_id, user_id, question_id, cycle=0, answer_index=None, answer_text=None):
+def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, answer_text=None):
     question = trivia_questions.find_one({"question_id": str(question_id), "enabled": True})
     if question is None:
         return "unavailable", None
@@ -1498,23 +1491,17 @@ def resolve_trivia_answer(guild_id, user_id, question_id, cycle=0, answer_index=
         return "incorrect", None
 
     reward = int(question.get("reward", 0))
-    cycle_filter = {"trivia_cycle": int(cycle)}
-    if int(cycle) == 0:
-        cycle_filter = {"$or": [{"trivia_cycle": 0}, {"trivia_cycle": {"$exists": False}}]}
     updated = users.find_one_and_update(
         {
             "guild_id": int(guild_id),
             "user_id": int(user_id),
             "trivia_claims": {"$ne": str(question_id)},
-            **cycle_filter,
         },
         {"$inc": {"balance": reward}, "$addToSet": {"trivia_claims": str(question_id)}},
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
         record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)})
-        if record and int(record.get("trivia_cycle", 0)) != int(cycle):
-            return "stale_round", int(record.get("balance", 0))
         if record and str(question_id) in (record.get("trivia_claims") or []):
             return "already_claimed", int(record.get("balance", 0))
         return "unavailable", None
@@ -4394,7 +4381,7 @@ class HalloweenBot(commands.Cog):
                 return
         question = random.choice(available) if config["trivia_shuffle"] else available[0]
         await interaction.response.send_message(
-            view=trivia_question_view(user_id, question, member_record.get("trivia_cycle", 0)),
+            view=trivia_question_view(user_id, question),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
