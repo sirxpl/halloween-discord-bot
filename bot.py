@@ -948,6 +948,9 @@ async def complete_trivia_attempt(interaction, question_id, answer_index=None, a
     controls = await db(get_member_controls, guild.id, interaction.user.id)
     if controls["blocked_from_candy"]:
         return "blocked", None, None
+    # Anyone can answer a posted question, including members who have never used the bot.
+    # The reward update below needs an existing record, so make sure they have one.
+    await db(ensure_user, guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
     question = await db(
         trivia_questions.find_one,
         {"question_id": str(question_id), "enabled": True},
@@ -974,9 +977,8 @@ async def complete_trivia_attempt(interaction, question_id, answer_index=None, a
 
 
 class TriviaAnswerModal(discord.ui.Modal):
-    def __init__(self, owner_id, question):
+    def __init__(self, question):
         super().__init__(title="Answer Trivia")
-        self.owner_id = int(owner_id)
         self.question_id = str(question["question_id"])
         self.reward = int(question.get("reward", 0))
         self.question_text = str(question.get("question", "Trivia question"))
@@ -994,15 +996,6 @@ class TriviaAnswerModal(discord.ui.Modal):
         self.add_item(self.answer_input)
 
     async def on_submit(self, interaction):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(
-                view=candy_notice_view(
-                    "This trivia round belongs to someone else",
-                    "Run **/trivia** to start and answer your own trivia round.",
-                ),
-                ephemeral=True,
-            )
-            return
         result, balance, question = await complete_trivia_attempt(
             interaction, self.question_id, answer_text=self.answer_input.value,
         )
@@ -1013,9 +1006,10 @@ class TriviaAnswerModal(discord.ui.Modal):
         await interaction.response.send_message(view=view, ephemeral=True)
 
 
-def trivia_question_view(owner_id, question):
+def trivia_question_view(starter_id, question):
+    """Public trivia card. Anyone in the server can answer; rewards are tracked per member."""
     ui = discord.ui
-    view = ui.LayoutView(timeout=600)
+    view = ui.LayoutView(timeout=None)
     question_type = question.get("question_type")
     title = "Multiple choice" if question_type == "multiple_choice" else (
         "Short response" if question_type == "short" else "Long response"
@@ -1023,7 +1017,7 @@ def trivia_question_view(owner_id, question):
     text = (
         f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
         f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
-        "-# Run **/trivia** to start your own round.\n"
+        f"-# Started by <@{int(starter_id)}> • anyone can answer • run **/trivia** for your own question\n"
         "-# Each question can award Candy once per member in each reward cycle."
     )
     components = [ui.TextDisplay(text)]
@@ -1034,15 +1028,6 @@ def trivia_question_view(owner_id, question):
                 button = ui.Button(label=option[:80], style=discord.ButtonStyle.secondary)
 
                 async def callback(button_interaction, selected_index=index):
-                    if button_interaction.user.id != int(owner_id):
-                        await button_interaction.response.send_message(
-                            view=candy_notice_view(
-                                "This trivia round belongs to someone else",
-                                "Run **/trivia** to start and answer your own trivia round.",
-                            ),
-                            ephemeral=True,
-                        )
-                        return
                     result, balance, current_question = await complete_trivia_attempt(
                         button_interaction, question["question_id"], answer_index=selected_index,
                     )
@@ -1065,16 +1050,7 @@ def trivia_question_view(owner_id, question):
         button = ui.Button(label="Write your answer", style=discord.ButtonStyle.primary)
 
         async def open_answer_modal(button_interaction):
-            if button_interaction.user.id != int(owner_id):
-                await button_interaction.response.send_message(
-                    view=candy_notice_view(
-                        "This trivia round belongs to someone else",
-                        "Run **/trivia** to start and answer your own trivia round.",
-                    ),
-                    ephemeral=True,
-                )
-                return
-            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question))
+            await button_interaction.response.send_modal(TriviaAnswerModal(question))
 
         button.callback = open_answer_modal
         components.append(ui.ActionRow(button))
