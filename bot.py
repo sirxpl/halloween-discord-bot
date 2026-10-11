@@ -4148,6 +4148,20 @@ log.info(
 
 
 class AccessControlledTree(app_commands.CommandTree):
+    def __init__(self, client):
+        # Slash commands belong to the server install only. Without this, Discord falls back to the app's
+        # Developer Portal defaults, which can offer them as "external" user-installed commands
+        # (replies then show only to the person who ran it, and they aren't a normal server command).
+        try:
+            super().__init__(
+                client,
+                allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=False, private_channel=False),
+                allowed_installs=app_commands.AppInstallationType(guild=True, user=False),
+            )
+        except (TypeError, AttributeError) as exc:
+            log.warning("Could not restrict commands to server installs (%s: %s); using Discord's defaults.", type(exc).__name__, exc)
+            super().__init__(client)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         command = interaction.command
         if command is None:
