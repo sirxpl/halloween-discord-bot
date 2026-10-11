@@ -4310,6 +4310,7 @@ class HalloweenBot(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="trivia", description="Answer a trivia question to earn Candy.")
+    @app_commands.guild_only()
     async def trivia(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message(
