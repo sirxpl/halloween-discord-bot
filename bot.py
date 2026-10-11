@@ -1023,7 +1023,7 @@ def trivia_question_view(owner_id, question):
     text = (
         f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
         f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
-        "-# Public trivia round • only the starter can answer here. Run **/trivia** to start your own.\n"
+        "-# Run **/trivia** to start your own round.\n"
         "-# Each question can award Candy once per member in each reward cycle."
     )
     components = [ui.TextDisplay(text)]
