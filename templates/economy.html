@@ -1,10 +1,213 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aureolis • Economy</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
-<style>.section-main{padding:36px;max-width:1100px}.hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.hero h1{font-size:48px;margin:10px 0}.hero p{color:#c9c3d8}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-top:20px}.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:20px}.card span{color:#aaa2b9}.card strong{display:block;font-size:28px;margin-top:6px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.form-grid label{display:block;color:#aaa2b9;font-size:13px}.form-grid input{width:100%;margin-top:7px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white}.button{margin-top:18px;padding:11px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;cursor:pointer}.log{padding:13px 0;border-bottom:1px solid rgba(255,255,255,.07)}.log small{color:#81798e}.back{color:#c4b5fd;text-decoration:none;display:inline-block;margin-bottom:20px}</style></head>
-<body>{% include "_sidebar.html" %}
-<main class="section-main page-center"><a class="back" href="/dashboard">← Back to dashboard</a><section class="hero"><div class="eyebrow">🎃 AUREOLIS • CANDY ECONOMY</div><h1>🍬 Economy</h1><p>Manage Candy rewards and monitor the economy from one place.</p></section>
-<section class="grid"><div class="card"><span>Tracked Users</span><strong>{{ "{:,}".format(total_users) }}</strong></div><div class="card"><span>Total Candy</span><strong>{{ "{:,}".format(total_candy) }} 🍬</strong></div><div class="card"><span>Daily Reward</span><strong>{{ "{:,}".format(config.daily_reward) }}</strong></div><div class="card"><span>Trick-or-Treat</span><strong>{{ config.trick_or_treat_min }}–{{ config.trick_or_treat_max }}</strong></div></section>
-<section class="card" style="margin-top:20px"><h2>⚙️ Economy settings</h2><p style="color:#aaa2b9">These values are used by the Discord economy commands immediately after saving.</p><form method="post" action="/economy/settings"><div class="form-grid"><label>Daily reward<input type="number" name="daily_reward" min="1" value="{{ config.daily_reward }}"></label><label>Trick-or-treat minimum<input type="number" name="trick_or_treat_min" min="1" value="{{ config.trick_or_treat_min }}"></label><label>Trick-or-treat maximum<input type="number" name="trick_or_treat_max" min="1" value="{{ config.trick_or_treat_max }}"></label></div><button class="button" type="submit">Save economy settings</button></form></section>
-<section class="card" style="margin-top:20px"><h2>🧾 Recent economy activity</h2>{% for item in recent %}<div class="log"><strong>{{ item.action|replace("_"," ")|title }}</strong>{% if item.username %} • {{ item.username }}{% endif %}{% if item.amount is not none %} • {{ item.amount|int }} 🍬{% endif %}<br><small>{{ item.created_at.strftime("%Y-%m-%d %H:%M UTC") if item.created_at else "Unknown time" }}</small></div>{% else %}<p style="color:#aaa2b9">No economy activity has been logged yet.</p>{% endfor %}</section>
-</main></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aureolis • Economy</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
+  <style>
+    .section-main{padding:36px;max-width:1100px}
+    .hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:20px}
+    .hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border-color:rgba(167,139,250,.2);border-radius:26px;padding:34px}
+    .eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}
+    .hero h1{font-size:48px;margin:10px 0}
+    .hero p,.muted{color:#c9c3d8}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-top:20px}
+    .card{padding:20px}
+    .card span{color:#aaa2b9}
+    .card strong{display:block;font-size:28px;margin-top:6px}
+    .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+    .form-grid label,.field-label{display:block;color:#c9c3d8;font-size:13px}
+    .form-grid input,.field,.form-grid select{width:100%;box-sizing:border-box;margin-top:7px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white;font:inherit}
+    .field{min-height:44px}
+    textarea.field{min-height:100px;resize:vertical}
+    .button{margin-top:14px;padding:11px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;cursor:pointer;text-decoration:none;display:inline-block}
+    .button.alt{background:#171722;border:1px solid rgba(255,255,255,.1)}
+    .button.danger{background:#3b2020;color:#fca5a5}
+    .log,.question-row{padding:13px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+    .log:last-child,.question-row:last-child{border-bottom:0}
+    .log small{color:#81798e}
+    .question-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+    .question-meta{color:#aaa2b9;font-size:13px;margin-top:5px}
+    .question-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+    .question-actions .button{margin:0;padding:8px 10px;font-size:12px}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#21162d;color:#c4b5fd;font-size:11px;font-weight:800;margin-left:6px}
+    .pill.off{background:#302020;color:#fca5a5}
+    .notice{padding:12px 14px;border-radius:10px;background:#163523;color:#86efac;margin:16px 0}
+    .notice.error{background:#3b2020;color:#fca5a5}
+    .back{color:#c4b5fd;text-decoration:none;display:inline-block;margin-bottom:20px}
+    .trivia-toggle{display:flex;justify-content:space-between;align-items:center;width:100%;padding:0;border:0;background:none;color:#f8f7ff;font:inherit;text-align:left;cursor:pointer}
+    .trivia-toggle h2{margin:0;font-size:24px}
+    .trivia-arrow{font-size:28px;font-weight:900;color:#c4b5fd;padding:0 8px}
+    .trivia-content{margin-top:18px}
+    .trivia-content[hidden]{display:none}
+    .subcard{background:#100c18;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:18px;margin-top:16px}
+    @media(max-width:700px){.section-main{padding:22px}.hero h1{font-size:38px}.question-row{flex-direction:column}.question-actions{justify-content:flex-start}}
+  </style>
+</head>
+<body>
+{% include "_sidebar.html" %}
+<main class="section-main page-center">
+  <a class="back" href="/dashboard">← Back to dashboard</a>
+  <section class="hero">
+    <div class="eyebrow">🎃 AUREOLIS • CANDY ECONOMY</div>
+    <h1>🍬 Economy</h1>
+    <p>Manage Candy rewards and monitor the economy from one place.</p>
+  </section>
+
+  <section class="grid">
+    <div class="card"><span>Tracked Users</span><strong>{{ "{:,}".format(total_users) }}</strong></div>
+    <div class="card"><span>Total Candy</span><strong>{{ "{:,}".format(total_candy) }} 🍬</strong></div>
+    <div class="card"><span>Daily Reward</span><strong>{{ "{:,}".format(config.daily_reward) }}</strong></div>
+    <div class="card"><span>Trick-or-Treat</span><strong>{{ config.trick_or_treat_min }}–{{ config.trick_or_treat_max }}</strong></div>
+  </section>
+
+  {% if request.args.get('saved') or request.args.get('trivia_saved') %}
+  <div class="notice">✓ Changes saved.</div>
+  {% elif request.args.get('error') == 'trivia_invalid' %}
+  <div class="notice error">Check the question, answer choices, correct answer, and Candy reward, then try again.</div>
+  {% elif request.args.get('error') == 'trivia_not_found' %}
+  <div class="notice error">That trivia question could not be found. Refresh and try again.</div>
+  {% elif request.args.get('error') %}
+  <div class="notice error">Please check the economy settings and try again.</div>
+  {% endif %}
+
+  <section class="card" style="margin-top:20px">
+    <button type="button" class="trivia-toggle" id="trivia-toggle" aria-expanded="true" aria-controls="trivia-content">
+      <h2>🧠 Trivia</h2><span class="trivia-arrow" id="trivia-arrow" aria-hidden="true">↓</span>
+    </button>
+    <div class="trivia-content" id="trivia-content">
+      <p class="muted">Add multiple-choice or written-answer questions. Members earn each question’s Candy reward once; written answers accept configured words or phrases, including partial matches.</p>
+
+      <form method="post" action="/economy/trivia/save" id="trivia-form" class="subcard">
+        <h3>{{ 'Edit trivia question' if edit_trivia else 'Add a trivia question' }}</h3>
+        {% if edit_trivia %}<input type="hidden" name="question_id" value="{{ edit_trivia.question_id }}">{% endif %}
+        <label class="field-label" for="trivia-question">Question</label>
+        <textarea class="field" id="trivia-question" name="question" maxlength="1000" required>{{ edit_trivia.get('question','') if edit_trivia else '' }}</textarea>
+
+        <div class="form-grid" style="margin-top:14px">
+          <label>Question type
+            <select class="field" name="question_type" id="trivia-type">
+              <option value="multiple_choice" {% if not edit_trivia or edit_trivia.get('question_type') == 'multiple_choice' %}selected{% endif %}>Multiple choice</option>
+              <option value="short" {% if edit_trivia and edit_trivia.get('question_type') == 'short' %}selected{% endif %}>Short response</option>
+              <option value="long" {% if edit_trivia and edit_trivia.get('question_type') == 'long' %}selected{% endif %}>Long response</option>
+            </select>
+          </label>
+          <label>Candy reward
+            <input type="number" name="reward" min="1" max="1000000" value="{{ edit_trivia.get('reward',100) if edit_trivia else 100 }}" required>
+          </label>
+        </div>
+
+        <div id="trivia-choice-fields" style="margin-top:14px">
+          <label class="field-label" for="trivia-options">Answer choices (one per line, 2–5 choices)</label>
+          <textarea class="field" id="trivia-options" name="options" placeholder="Choice A&#10;Choice B&#10;Choice C">{{ edit_trivia.get('options',[])|join('\n') if edit_trivia and edit_trivia.get('question_type') == 'multiple_choice' else '' }}</textarea>
+          <label class="field-label" for="trivia-correct" style="margin-top:12px">Correct choice (enter it exactly as listed)</label>
+          {% set correct_choice = edit_trivia.options[edit_trivia.correct_index] if edit_trivia and edit_trivia.get('question_type') == 'multiple_choice' and edit_trivia.get('correct_index') is not none and edit_trivia.get('correct_index') < edit_trivia.options|length else '' %}
+          <input class="field" id="trivia-correct" name="correct_answer" value="{{ correct_choice }}" placeholder="Correct choice">
+        </div>
+
+        <div id="trivia-text-fields" style="margin-top:14px">
+          <label class="field-label" for="trivia-answers">Accepted words or phrases (one per line; partial matches earn the full reward)</label>
+          <textarea class="field" id="trivia-answers" name="accepted_answers" placeholder="someone&#10;some person">{{ edit_trivia.get('accepted_answers',[])|join('\n') if edit_trivia and edit_trivia.get('question_type') in ['short','long'] else '' }}</textarea>
+        </div>
+
+        <button class="button" type="submit">{{ 'Save question' if edit_trivia else 'Add question' }}</button>
+        {% if edit_trivia %}<a class="button alt" href="{{ url_for('economy_page') }}">Cancel edit</a>{% endif %}
+      </form>
+
+      <div class="subcard">
+        <h3>Trivia questions ({{ trivia_questions|length }})</h3>
+        {% for question in trivia_questions %}
+        <div class="question-row">
+          <div>
+            <strong>{{ question.get('question','Trivia question') }}</strong>
+            <span class="pill {{ 'off' if not question.get('enabled',True) else '' }}">{{ 'Active' if question.get('enabled',True) else 'Paused' }}</span>
+            <div class="question-meta">
+              {{ {'multiple_choice':'Multiple choice','short':'Short response','long':'Long response'}.get(question.get('question_type'),'Trivia') }}
+              · {{ "{:,}".format(question.get('reward',0)|int) }} 🍬
+              {% if question.get('question_type') == 'multiple_choice' %}
+                · {{ question.get('options',[])|length }} choices
+              {% else %}
+                · {{ question.get('accepted_answers',[])|length }} accepted answer{{ '' if question.get('accepted_answers',[])|length == 1 else 's' }}
+              {% endif %}
+            </div>
+          </div>
+          <div class="question-actions">
+            <a class="button alt" href="{{ url_for('economy_page', edit_trivia=question.question_id) }}">Edit</a>
+            <form method="post" action="/economy/trivia/toggle">
+              <input type="hidden" name="question_id" value="{{ question.question_id }}">
+              <input type="hidden" name="enabled" value="{{ 0 if question.get('enabled',True) else 1 }}">
+              <button class="button alt" type="submit">{{ 'Pause' if question.get('enabled',True) else 'Activate' }}</button>
+            </form>
+            <form method="post" action="/economy/trivia/remove" onsubmit="return confirm('Delete this trivia question? Members will not be able to earn it afterward.')">
+              <input type="hidden" name="question_id" value="{{ question.question_id }}">
+              <button class="button danger" type="submit">Delete</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <p class="muted">No trivia questions yet. Add one above to get started.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:20px">
+    <h2>⚙️ Economy settings</h2>
+    <p class="muted">These values are used by the Discord economy commands immediately after saving.</p>
+    <form method="post" action="/economy/settings">
+      <div class="form-grid">
+        <label>Daily reward<input type="number" name="daily_reward" min="1" value="{{ config.daily_reward }}"></label>
+        <label>Trick-or-treat minimum<input type="number" name="trick_or_treat_min" min="1" value="{{ config.trick_or_treat_min }}"></label>
+        <label>Trick-or-treat maximum<input type="number" name="trick_or_treat_max" min="1" value="{{ config.trick_or_treat_max }}"></label>
+      </div>
+      <button class="button" type="submit">Save economy settings</button>
+    </form>
+  </section>
+
+  <section class="card" style="margin-top:20px">
+    <h2>🧾 Recent economy activity</h2>
+    {% for item in recent %}
+    <div class="log">
+      <strong>{{ item.action|replace("_"," ")|title }}</strong>
+      {% if item.username %} • {{ item.username }}{% endif %}
+      {% if item.amount is not none %} • {{ item.amount|int }} 🍬{% endif %}
+      <br><small>{{ item.created_at.strftime("%Y-%m-%d %H:%M UTC") if item.created_at else "Unknown time" }}</small>
+    </div>
+    {% else %}
+    <p class="muted">No economy activity has been logged yet.</p>
+    {% endfor %}
+  </section>
+</main>
+<script>
+(() => {
+  const toggle = document.getElementById("trivia-toggle");
+  const content = document.getElementById("trivia-content");
+  const arrow = document.getElementById("trivia-arrow");
+  toggle.addEventListener("click", () => {
+    const expanded = toggle.getAttribute("aria-expanded") === "true";
+    toggle.setAttribute("aria-expanded", String(!expanded));
+    content.hidden = expanded;
+    arrow.textContent = expanded ? "↑" : "↓";
+  });
+
+  const type = document.getElementById("trivia-type");
+  const choiceFields = document.getElementById("trivia-choice-fields");
+  const textFields = document.getElementById("trivia-text-fields");
+  const options = document.getElementById("trivia-options");
+  const correct = document.getElementById("trivia-correct");
+  const answers = document.getElementById("trivia-answers");
+  const updateTypeFields = () => {
+    const multipleChoice = type.value === "multiple_choice";
+    choiceFields.hidden = !multipleChoice;
+    textFields.hidden = multipleChoice;
+    options.required = multipleChoice;
+    correct.required = multipleChoice;
+    answers.required = !multipleChoice;
+  };
+  type.addEventListener("change", updateTypeFields);
+  updateTypeFields();
+})();
+</script>
+</body>
+</html>
