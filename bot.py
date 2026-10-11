@@ -996,7 +996,10 @@ class TriviaAnswerModal(discord.ui.Modal):
     async def on_submit(self, interaction):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                view=candy_notice_view(
+                    "This trivia round belongs to someone else",
+                    "Run **/trivia** to start and answer your own trivia round.",
+                ),
                 ephemeral=True,
             )
             return
@@ -1020,6 +1023,7 @@ def trivia_question_view(owner_id, question):
     text = (
         f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
         f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
+        "-# Public trivia round • only the starter can answer here. Run **/trivia** to start your own.\n"
         "-# Each question can award Candy once per member."
     )
     components = [ui.TextDisplay(text)]
@@ -1032,7 +1036,10 @@ def trivia_question_view(owner_id, question):
                 async def callback(button_interaction, selected_index=index):
                     if button_interaction.user.id != int(owner_id):
                         await button_interaction.response.send_message(
-                            view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                            view=candy_notice_view(
+                                "This trivia round belongs to someone else",
+                                "Run **/trivia** to start and answer your own trivia round.",
+                            ),
                             ephemeral=True,
                         )
                         return
@@ -1049,7 +1056,7 @@ def trivia_question_view(owner_id, question):
                             result, current_question or question,
                             question.get("reward"), balance,
                         )
-                    await button_interaction.response.edit_message(view=result_view)
+                    await button_interaction.response.send_message(view=result_view, ephemeral=True)
 
                 button.callback = callback
                 row.add_item(button)
@@ -1060,7 +1067,10 @@ def trivia_question_view(owner_id, question):
         async def open_answer_modal(button_interaction):
             if button_interaction.user.id != int(owner_id):
                 await button_interaction.response.send_message(
-                    view=candy_notice_view("This isn't yours", "Run /trivia to answer your own question."),
+                    view=candy_notice_view(
+                        "This trivia round belongs to someone else",
+                        "Run **/trivia** to start and answer your own trivia round.",
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -4263,7 +4273,6 @@ class HalloweenBot(commands.Cog):
         question = random.choice(available)
         await interaction.response.send_message(
             view=trivia_question_view(user_id, question),
-            ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
