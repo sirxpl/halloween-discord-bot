@@ -1,29 +1,96 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Aureolis • Inventory</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
-<style>
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d,#0d0917 45%,#07050d);color:#f8f7ff;font-family:Inter,system-ui,sans-serif;min-height:100vh}.wrap{max-width:1050px;margin:auto;padding:56px 24px 70px}.hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px;box-shadow:0 24px 70px rgba(0,0,0,.3)}.eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}.hero h1{font-size:clamp(34px,6vw,58px);margin:10px 0}.hero p{color:#c9c3d8;max-width:700px;line-height:1.7}.muted{color:#aaa2b9}.balance{font-size:30px;font-weight:900;margin-top:8px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:24px}.card{padding:24px;border:1px solid #ffffff12;border-radius:20px;background:#140f1edc}.icon{font-size:42px}.card h2{margin:12px 0 6px}.button{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:11px 16px;border-radius:12px;font-weight:800}.empty{margin-top:24px;padding:28px;border:1px dashed #ffffff20;border-radius:18px;color:#aaa2b9}.select{margin-top:20px}.select a{color:#c4b5fd;margin-right:12px}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aureolis • Inventory</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261001') }}">
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at top,#24143d,#0d0917 45%,#07050d);color:#f8f7ff;font-family:Inter,system-ui,sans-serif;min-height:100vh}
+    .wrap{max-width:1050px;margin:auto;padding:56px 24px 70px}
+    .hero{background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border:1px solid rgba(167,139,250,.2);border-radius:26px;padding:34px;box-shadow:0 24px 70px rgba(0,0,0,.3)}
+    .eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}
+    .hero h1{font-size:clamp(34px,6vw,58px);margin:10px 0}
+    .hero p{color:#c9c3d8;max-width:700px;line-height:1.7}
+    .muted{color:#aaa2b9}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-top:24px}
+    .card{padding:24px;border:1px solid #ffffff12;border-radius:20px;background:#140f1edc}
+    .icon{font-size:42px}
+    .card h2{margin:12px 0 6px}
+    .button{display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:11px 16px;border-radius:12px;font-weight:800;border:0;cursor:pointer}
+    .remove{background:#3b2020;color:#fca5a5;margin-top:15px}
+    .role-choice{display:flex;gap:8px;align-items:flex-start;margin-top:15px;color:#c9c3d8;font-size:13px;line-height:1.45}
+    .role-choice input{margin-top:3px;accent-color:#7c3aed}
+    .empty,.notice{margin-top:24px;padding:22px;border:1px dashed #ffffff20;border-radius:18px;color:#aaa2b9}
+    .notice{margin:20px 0 0;background:#163523;border-color:#245b3b;color:#86efac}
+    .notice.error{background:#3b2020;border-color:#6b2a2a;color:#fca5a5}
+    .select{margin-top:20px}
+    .select a{color:#c4b5fd;margin-right:12px}
+    @media(max-width:650px){.wrap{padding:32px 18px}.hero{padding:25px}}
+  </style>
 </head>
 <body>
 {% include "_sidebar.html" %}
 <main class="section-main wrap">
-<section class="hero">
-  <div class="eyebrow">🎃 AUREOLIS • YOUR COLLECTION</div>
-  <h1>🎒 Inventory</h1>
-  <p>View the spooky items you have collected throughout the Aureolis Halloween season.</p>
-</section>
-{% if profile and profile.inventory %}
-<section class="grid">
-{% for item in profile.inventory|reverse %}
-<article class="card"><div class="icon">{{ item.name.split(' ',1)[0] }}</div><h2>{{ item.name.split(' ',1)[1] }}</h2><div class="muted">Purchased for {{ "{:,}".format(item.price) }} 🍬</div></article>
-{% endfor %}
-</section>
-{% else %}
-<div class="empty">🎃 Your inventory is empty. Visit the <a href="/shop" style="color:#c4b5fd">Candy Shop</a> to get your first spooky item.</div>
-{% endif %}
+  <section class="hero">
+    <div class="eyebrow">🎃 AUREOLIS • YOUR COLLECTION</div>
+    <h1>🎒 Inventory</h1>
+    <p>View the spooky items you have collected throughout the Aureolis Halloween season.</p>
+  </section>
+  {% if request.args.get('removed') %}
+  <div class="notice" role="status">✓ Item removed from your inventory. No Candy was refunded.</div>
+  {% elif request.args.get('error') == 'purchase_missing' %}
+  <div class="notice error" role="alert">That item is no longer in your inventory. Refresh and try again.</div>
+  {% elif request.args.get('error') == 'role_offline' %}
+  <div class="notice error" role="alert">The bot must be online in that server to remove the Discord role.</div>
+  {% elif request.args.get('error') == 'role_unknown' %}
+  <div class="notice error" role="alert">The Discord role for this old purchase could not be found, so nothing was removed.</div>
+  {% elif request.args.get('error') == 'role_remove' %}
+  <div class="notice error" role="alert">The Discord role could not be removed, so the inventory item was kept.</div>
+  {% elif request.args.get('error') == 'no_server' %}
+  <div class="notice error" role="alert">Choose a server before managing its inventory.</div>
+  {% elif request.args.get('error') %}
+  <div class="notice error" role="alert">That request could not be completed.</div>
+  {% endif %}
+  {% if profile and profile.inventory %}
+  <section class="grid">
+    {% for item in profile.inventory|reverse %}
+    <article class="card">
+      <div class="icon">{{ item.get('emoji') or item.get('name','🎃').split(' ',1)[0] }}</div>
+      <h2>{{ item.get('name','Shop Item') }}</h2>
+      {% if item.get('description') %}<div class="muted">{{ item.get('description') }}</div>{% endif %}
+      <div class="muted" style="margin-top:10px">Purchased for {{ "{:,}".format(item.get('price',0)|int) }} 🍬{% if item.get('type') == 'role' %} · Discord role{% endif %}</div>
+      <form method="post" action="{{ url_for('inventory_remove') }}" class="remove-form"
+            data-item-name="{{ item.get('name','Shop Item') }}">
+        <input type="hidden" name="item_id" value="{{ item.get('item_id','') }}">
+        <input type="hidden" name="purchase_id" value="{{ item.get('purchase_id','') }}">
+        <input type="hidden" name="purchased_at_ms" value="{{ item.get('purchase_timestamp_ms') or '' }}">
+        {% if item.get('type') == 'role' %}
+        <label class="role-choice"><input type="checkbox" name="remove_role"><span>Also remove the Discord role</span></label>
+        {% endif %}
+        <button class="button remove" type="submit">Remove without refund</button>
+      </form>
+    </article>
+    {% endfor %}
+  </section>
+  {% else %}
+  <div class="empty">🎃 Your inventory is empty. Visit the <a href="/shop" style="color:#c4b5fd">Candy Shop</a> to get your first spooky item.</div>
+  {% endif %}
 </main>
-</body></html>
+<script>
+document.querySelectorAll(".remove-form").forEach((form) => {
+  form.addEventListener("submit", (event) => {
+    const itemName = form.dataset.itemName || "this item";
+    const removeRole = form.querySelector("[name='remove_role']")?.checked;
+    const details = removeRole
+      ? "The Discord role will also be removed."
+      : "The Discord role, if any, will stay on your account.";
+    if (!window.confirm(`Remove ${itemName} from your inventory without a refund? ${details}`)) {
+      event.preventDefault();
+    }
+  });
+});
+</script>
+</body>
+</html>
