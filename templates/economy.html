@@ -23,6 +23,7 @@
     textarea.field{min-height:100px;resize:vertical}
     .button{margin-top:14px;padding:11px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;cursor:pointer;text-decoration:none;display:inline-block}
     .button.alt{background:#171722;border:1px solid rgba(255,255,255,.1)}
+    .button.enabled{background:#17623b}
     .button.danger{background:#3b2020;color:#fca5a5}
     .log,.question-row{padding:13px 0;border-bottom:1px solid rgba(255,255,255,.07)}
     .log:last-child,.question-row:last-child{border-bottom:0}
@@ -77,7 +78,21 @@
       <h2>🧠 Trivia</h2><span class="trivia-arrow" id="trivia-arrow" aria-hidden="true">↓</span>
     </button>
     <div class="trivia-content" id="trivia-content">
-      <p class="muted">Add multiple-choice or written-answer questions. Members earn each question’s Candy reward once; written answers accept configured words or phrases, including partial matches.</p>
+      <p class="muted">Add multiple-choice or written-answer questions. Rewards are once per question unless looping is enabled; written answers accept configured words or phrases, including partial matches.</p>
+      <form method="post" action="/economy/trivia/loop">
+        <input type="hidden" name="enabled" value="{{ 0 if trivia_looping else 1 }}">
+        <button class="button {{ 'enabled' if trivia_looping else 'alt' }}" type="submit">
+          Allow looping questions: {{ 'On' if trivia_looping else 'Off' }}
+        </button>
+      </form>
+      <p class="muted" style="font-size:13px">When enabled, members can start another round after answering every active question. Rewards are once per question each round.</p>
+      <form method="post" action="/economy/trivia/shuffle">
+        <input type="hidden" name="enabled" value="{{ 0 if trivia_shuffle else 1 }}">
+        <button class="button {{ 'enabled' if trivia_shuffle else 'alt' }}" type="submit">
+          Shuffle questions: {{ 'On' if trivia_shuffle else 'Off' }}
+        </button>
+      </form>
+      <p class="muted" style="font-size:13px">When enabled, members get remaining questions in random order. Turn it off to use the saved question order.</p>
 
       <form method="post" action="/economy/trivia/save" id="trivia-form" class="subcard">
         <h3>{{ 'Edit trivia question' if edit_trivia else 'Add a trivia question' }}</h3>
