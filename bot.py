@@ -210,7 +210,9 @@ def shop_page():
     result = request.args.get("role_result")
     purchase_message = SHOP_RESULT_MESSAGES.get(result) if result else None
     return render_template("shop.html", items=items, guild=guild, purchase_message=purchase_message,
-                           purchase_ok=(result == "success"), requirement_mode=item_requirement_mode)
+                           purchase_ok=(result == "success"), requirement_mode=item_requirement_mode,
+                           purchased_item=request.args.get("item_name"),
+                           purchase_price=request.args.get("price"))
 
 
 @app.get("/shop-panel")
@@ -380,8 +382,19 @@ def shop_item_buy_web(item_id):
     user = session.get("discord_user"); guild = selected_guild()
     if not user or not guild:
         return redirect(url_for("login"))
+    item_before_purchase = shop_items.find_one({
+        "guild_id": int(guild["id"]),
+        "item_id": str(item_id),
+        "enabled": True,
+    })
     result = purchase_shop_item(int(guild["id"]), int(user["id"]), item_id)
-    return redirect(url_for("shop_page", guild=guild["id"], role_result=result))
+    redirect_args = {"guild": guild["id"], "role_result": result}
+    if result == "success" and item_before_purchase:
+        redirect_args.update({
+            "item_name": item_before_purchase.get("name", "Shop Item"),
+            "price": int(item_before_purchase.get("price", 0)),
+        })
+    return redirect(url_for("shop_page", **redirect_args))
 
 
 @app.get("/rewards")
@@ -398,7 +411,126 @@ def inventory_page():
     profile = None
     if guild:
         profile = users.find_one({"guild_id": int(guild["id"]), "user_id": int(user["id"])})
+        if profile:
+            profile["inventory"] = [
+                {
+                    **item,
+                    "purchase_timestamp_ms": (
+                        int(as_utc(item["purchased_at"]).timestamp() * 1000)
+                        if isinstance(item.get("purchased_at"), datetime) else None
+                    ),
+                }
+                for item in profile.get("inventory", []) or []
+                if isinstance(item, dict)
+            ]
     return render_template("inventory.html", user=user, avatar_url=discord_avatar_url(user), guilds=session.get("discord_guilds", []), guild=guild, profile=profile)
+
+
+@app.post("/inventory/remove")
+def inventory_remove():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild = selected_guild()
+    if not guild:
+        return redirect(url_for("inventory_page", error="no_server"))
+    guild_id = int(guild["id"])
+    user_id = int(user["id"])
+    item_id = request.form.get("item_id", "").strip()
+    purchase_id = request.form.get("purchase_id", "").strip()
+    remove_role = request.form.get("remove_role") == "on"
+    if not item_id:
+        return redirect(url_for("inventory_page", error="invalid"))
+
+    record = users.find_one({"guild_id": guild_id, "user_id": user_id})
+    inventory = (record or {}).get("inventory", []) or []
+    if purchase_id:
+        purchase_match = {"item_id": item_id, "purchase_id": purchase_id}
+        purchase = next(
+            (item for item in inventory
+             if isinstance(item, dict) and all(item.get(key) == value for key, value in purchase_match.items())),
+            None,
+        )
+    else:
+        try:
+            purchased_at_ms = int(request.form.get("purchased_at_ms", ""))
+        except (TypeError, ValueError):
+            return redirect(url_for("inventory_page", error="invalid"))
+        purchase = next(
+            (item for item in inventory
+             if isinstance(item, dict)
+             and item.get("item_id") == item_id
+             and isinstance(item.get("purchased_at"), datetime)
+             and int(as_utc(item["purchased_at"]).timestamp() * 1000) == purchased_at_ms),
+            None,
+        )
+        if purchase:
+            purchase_match = {"item_id": item_id, "purchased_at": purchase["purchased_at"]}
+        else:
+            purchase_match = {"item_id": item_id, "purchased_at": None}
+    if purchase is None:
+        return redirect(url_for("inventory_page", error="purchase_missing"))
+
+    if remove_role and purchase.get("type") == "role":
+        role_id = purchase.get("role_id")
+        if not role_id:
+            shop_item = shop_items.find_one({"guild_id": guild_id, "item_id": item_id})
+            role_id = (shop_item or {}).get("reward", {}).get("role_id")
+        if not role_id:
+            return redirect(url_for("inventory_page", error="role_unknown"))
+
+        bot = BOT.get("instance")
+        discord_guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if discord_guild is None:
+            return redirect(url_for("inventory_page", error="role_offline"))
+        role = discord_guild.get_role(int(role_id))
+        if role is not None:
+            try:
+                member = _run_on_bot_loop(bot, discord_guild.fetch_member(user_id), 10)
+            except discord.NotFound:
+                member = None
+            except Exception:
+                log.exception("Could not fetch member %s in guild %s before inventory removal.", user_id, guild_id)
+                return redirect(url_for("inventory_page", error="role_remove"))
+            if member is not None and role in member.roles:
+                try:
+                    _run_on_bot_loop(
+                        bot,
+                        member.remove_roles(role, atomic=False, reason="Member removed shop reward from inventory"),
+                        15,
+                    )
+                    verified = _run_on_bot_loop(bot, discord_guild.fetch_member(user_id), 10)
+                    if role in verified.roles:
+                        raise RuntimeError("Discord still reports the role after removal.")
+                except discord.NotFound:
+                    pass
+                except Exception:
+                    log.exception("Could not remove role %s from member %s in guild %s.", role_id, user_id, guild_id)
+                    return redirect(url_for("inventory_page", error="role_remove"))
+
+    removed = users.update_one(
+        {"guild_id": guild_id, "user_id": user_id, "inventory": {"$elemMatch": purchase_match}},
+        {"$pull": {"inventory": purchase_match}},
+    )
+    if not removed.modified_count:
+        return redirect(url_for("inventory_page", error="purchase_missing"))
+    log_activity(
+        "shop_purchase_removed",
+        user_id=user_id,
+        username=record.get("username"),
+        guild_id=guild_id,
+        amount=0,
+        details={
+            "item_id": item_id,
+            "item": purchase.get("name", "Shop Item"),
+            "purchase_id": purchase.get("purchase_id"),
+            "refunded": False,
+            "removed_by": user_id,
+            "source": "member_inventory",
+            "role_removed": bool(remove_role and purchase.get("type") == "role"),
+        },
+    )
+    return redirect(url_for("inventory_page", removed="1"))
 
 
 @app.get("/events")
