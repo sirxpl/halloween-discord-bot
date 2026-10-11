@@ -927,6 +927,9 @@ def trivia_result_view(result, question, reward=None, balance=None):
     elif result == "already_claimed":
         text = "## 🎃 Reward already claimed\nYou already earned Candy for this question."
         color = 0xF59E0B
+    elif result == "stale_round":
+        text = "## 🔄 This trivia round expired\nRun **/trivia** to start the current round."
+        color = 0xF59E0B
     elif result == "incorrect":
         text = "## ❌ Not quite\nThat answer did not match. Try another trivia question!"
         color = 0xEF4444
@@ -941,7 +944,7 @@ def trivia_result_view(result, question, reward=None, balance=None):
     return view
 
 
-async def complete_trivia_attempt(interaction, question_id, answer_index=None, answer_text=None):
+async def complete_trivia_attempt(interaction, question_id, cycle=0, answer_index=None, answer_text=None):
     guild = interaction.guild
     if guild is None:
         return "unavailable", None, None
@@ -957,6 +960,7 @@ async def complete_trivia_attempt(interaction, question_id, answer_index=None, a
         guild.id,
         interaction.user.id,
         question_id,
+        cycle,
         answer_index,
         answer_text,
     )
@@ -974,10 +978,11 @@ async def complete_trivia_attempt(interaction, question_id, answer_index=None, a
 
 
 class TriviaAnswerModal(discord.ui.Modal):
-    def __init__(self, owner_id, question):
+    def __init__(self, owner_id, question, cycle=0):
         super().__init__(title="Answer Trivia")
         self.owner_id = int(owner_id)
         self.question_id = str(question["question_id"])
+        self.cycle = int(cycle)
         self.reward = int(question.get("reward", 0))
         self.question_text = str(question.get("question", "Trivia question"))
         text_style = (
@@ -1004,7 +1009,8 @@ class TriviaAnswerModal(discord.ui.Modal):
             )
             return
         result, balance, question = await complete_trivia_attempt(
-            interaction, self.question_id, answer_text=self.answer_input.value,
+            interaction, self.question_id, cycle=self.cycle,
+            answer_text=self.answer_input.value,
         )
         if result == "blocked":
             view = candy_notice_view("🚫 Not allowed", "You are not allowed to participate in Candy activities in this server.")
@@ -1013,7 +1019,7 @@ class TriviaAnswerModal(discord.ui.Modal):
         await interaction.response.send_message(view=view, ephemeral=True)
 
 
-def trivia_question_view(owner_id, question):
+def trivia_question_view(owner_id, question, cycle=0):
     ui = discord.ui
     view = ui.LayoutView(timeout=600)
     question_type = question.get("question_type")
@@ -1044,7 +1050,8 @@ def trivia_question_view(owner_id, question):
                         )
                         return
                     result, balance, current_question = await complete_trivia_attempt(
-                        button_interaction, question["question_id"], answer_index=selected_index,
+                        button_interaction, question["question_id"], cycle=cycle,
+                        answer_index=selected_index,
                     )
                     if result == "blocked":
                         result_view = candy_notice_view(
@@ -1074,7 +1081,7 @@ def trivia_question_view(owner_id, question):
                     ephemeral=True,
                 )
                 return
-            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question))
+            await button_interaction.response.send_modal(TriviaAnswerModal(owner_id, question, cycle))
 
         button.callback = open_answer_modal
         components.append(ui.ActionRow(button))
@@ -1438,6 +1445,8 @@ def get_economy_config():
         "daily_reward": int(record.get("daily_reward", DAILY_REWARD)),
         "trick_or_treat_min": int(record.get("trick_or_treat_min", TRICK_OR_TREAT_MIN)),
         "trick_or_treat_max": int(record.get("trick_or_treat_max", TRICK_OR_TREAT_MAX)),
+        "trivia_looping": bool(record.get("trivia_looping", False)),
+        "trivia_shuffle": bool(record.get("trivia_shuffle", True)),
     }
 
 
@@ -1473,7 +1482,7 @@ def trivia_answer_matches(answer, accepted_answers):
     return False
 
 
-def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, answer_text=None):
+def resolve_trivia_answer(guild_id, user_id, question_id, cycle=0, answer_index=None, answer_text=None):
     question = trivia_questions.find_one({"question_id": str(question_id), "enabled": True})
     if question is None:
         return "unavailable", None
@@ -1489,17 +1498,48 @@ def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, ans
         return "incorrect", None
 
     reward = int(question.get("reward", 0))
+    cycle_filter = {"trivia_cycle": int(cycle)}
+    if int(cycle) == 0:
+        cycle_filter = {"$or": [{"trivia_cycle": 0}, {"trivia_cycle": {"$exists": False}}]}
     updated = users.find_one_and_update(
-        {"guild_id": int(guild_id), "user_id": int(user_id), "trivia_claims": {"$ne": str(question_id)}},
+        {
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "trivia_claims": {"$ne": str(question_id)},
+            **cycle_filter,
+        },
         {"$inc": {"balance": reward}, "$addToSet": {"trivia_claims": str(question_id)}},
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
         record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)})
-        if record and str(question_id) in record.get("trivia_claims", []):
+        if record and int(record.get("trivia_cycle", 0)) != int(cycle):
+            return "stale_round", int(record.get("balance", 0))
+        if record and str(question_id) in (record.get("trivia_claims") or []):
             return "already_claimed", int(record.get("balance", 0))
         return "unavailable", None
     return "correct", int(updated.get("balance", 0))
+
+
+def reset_trivia_claims_for_loop(guild_id, user_id, record, active_question_ids):
+    claimed = record.get("trivia_claims") or []
+    if not active_question_ids or not all(question_id in claimed for question_id in active_question_ids):
+        return None
+    cycle = int(record.get("trivia_cycle", 0))
+    query = {"guild_id": int(guild_id), "user_id": int(user_id)}
+    if cycle == 0:
+        query["$or"] = [{"trivia_cycle": 0}, {"trivia_cycle": {"$exists": False}}]
+    else:
+        query["trivia_cycle"] = cycle
+    if "trivia_claims" in record:
+        query["trivia_claims"] = record["trivia_claims"]
+    else:
+        query["trivia_claims"] = {"$exists": False}
+    return users.find_one_and_update(
+        query,
+        {"$set": {"trivia_claims": []}, "$inc": {"trivia_cycle": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
 
 
 def get_member_controls(guild_id, user_id):
@@ -1800,6 +1840,8 @@ LOG_EVENTS = {
     "trivia_reward":        ("economy", "🧠", "Trivia Reward", +1),
     "trivia_question_saved": ("admin", "🧠", "Trivia Question Saved", 0),
     "trivia_question_removed": ("admin", "🗑️", "Trivia Question Removed", 0),
+    "trivia_looping":       ("admin", "🔄", "Trivia Looping Updated", 0),
+    "trivia_shuffle":       ("admin", "🔀", "Trivia Shuffle Updated", 0),
     "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
@@ -2264,6 +2306,7 @@ def economy_page():
     return render_template(
         "economy.html", config=config, total_users=total_users, total_candy=total_candy,
         recent=recent, trivia_questions=trivia_listing, edit_trivia=edit_trivia,
+        trivia_looping=config["trivia_looping"], trivia_shuffle=config["trivia_shuffle"],
     )
 
 @app.post("/economy/settings")
@@ -2376,6 +2419,56 @@ def economy_trivia_toggle():
     )
     if not result.matched_count:
         return redirect(url_for("economy_page", error="trivia_not_found"))
+    return redirect(url_for("economy_page", trivia_saved="1"))
+
+
+@app.post("/economy/trivia/loop")
+def economy_trivia_loop():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    enabled_value = request.form.get("enabled")
+    if enabled_value not in {"0", "1"}:
+        return redirect(url_for("economy_page", error="trivia_invalid"))
+    enabled = enabled_value == "1"
+    economy_config.update_one(
+        {"_id": "global"},
+        {"$set": {"trivia_looping": enabled, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    log_activity(
+        "trivia_looping",
+        user_id=user["id"],
+        username=user.get("username"),
+        details={"enabled": enabled},
+    )
+    return redirect(url_for("economy_page", trivia_saved="1"))
+
+
+@app.post("/economy/trivia/shuffle")
+def economy_trivia_shuffle():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    enabled_value = request.form.get("enabled")
+    if enabled_value not in {"0", "1"}:
+        return redirect(url_for("economy_page", error="trivia_invalid"))
+    enabled = enabled_value == "1"
+    economy_config.update_one(
+        {"_id": "global"},
+        {"$set": {"trivia_shuffle": enabled, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    log_activity(
+        "trivia_shuffle",
+        user_id=user["id"],
+        username=user.get("username"),
+        details={"enabled": enabled},
+    )
     return redirect(url_for("economy_page", trivia_saved="1"))
 
 
@@ -3732,6 +3825,7 @@ def ensure_user(guild_id: int, user_id: int, username=None, display_name=None):
             "balance": 0,
             "inventory": [],
             "trivia_claims": [],
+            "trivia_cycle": 0,
             "created_at": now_utc(),
         }
     }
@@ -4258,21 +4352,49 @@ class HalloweenBot(commands.Cog):
                 ephemeral=True,
             )
             return
+        config = await db(get_economy_config)
+        questions.sort(key=lambda question: (
+            str(question.get("created_at") or ""),
+            str(question.get("question_id") or ""),
+        ))
         claimed = set(member_record.get("trivia_claims") or [])
         available = [question for question in questions if question.get("question_id") not in claimed]
         if not available:
-            await interaction.response.send_message(
-                view=candy_notice_view(
-                    "🎉 All caught up",
-                    "You have already earned Candy for every active trivia question.",
-                    ok=True,
-                ),
-                ephemeral=True,
+            if not config["trivia_looping"]:
+                await interaction.response.send_message(
+                    view=candy_notice_view(
+                        "🎉 All caught up",
+                        "You have already earned Candy for every active trivia question.",
+                        ok=True,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            active_question_ids = [str(question["question_id"]) for question in questions]
+            refreshed = await db(
+                reset_trivia_claims_for_loop,
+                guild_id,
+                user_id,
+                member_record,
+                active_question_ids,
             )
-            return
-        question = random.choice(available)
+            member_record = refreshed or await db(
+                users.find_one, {"guild_id": guild_id, "user_id": user_id},
+            ) or member_record
+            claimed = set(member_record.get("trivia_claims") or [])
+            available = [question for question in questions if question.get("question_id") not in claimed]
+            if not available:
+                await interaction.response.send_message(
+                    view=candy_notice_view(
+                        "🔄 Trivia round is refreshing",
+                        "Run **/trivia** again in a moment to start the next round.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+        question = random.choice(available) if config["trivia_shuffle"] else available[0]
         await interaction.response.send_message(
-            view=trivia_question_view(user_id, question),
+            view=trivia_question_view(user_id, question, member_record.get("trivia_cycle", 0)),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
