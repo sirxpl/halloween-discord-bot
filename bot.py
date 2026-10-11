@@ -927,8 +927,11 @@ def trivia_result_view(result, question, reward=None, balance=None):
     elif result == "already_claimed":
         text = "## 🎃 Reward already claimed\nYou already earned Candy for this question."
         color = 0xF59E0B
+    elif result == "already_tried":
+        text = "## 🎃 One try only\nYou already used your try on this question. Run **/trivia** for a different one!"
+        color = 0xF59E0B
     elif result == "incorrect":
-        text = "## ❌ Not quite\nThat answer did not match. Try another trivia question!"
+        text = "## ❌ Not quite\nThat wasn't the answer, and you've used your one try on this question. Run **/trivia** for another!"
         color = 0xEF4444
     else:
         text = "## ⚠️ Question unavailable\nThis trivia question is no longer active."
@@ -1018,7 +1021,7 @@ def trivia_question_view(starter_id, question):
         f"## 🧠 Trivia • {title}\n{question.get('question','')}\n\n"
         f"🏆 Reward: **{int(question.get('reward',0)):,} 🍬**\n"
         f"-# Started by <@{int(starter_id)}> • anyone can answer • run **/trivia** for your own question\n"
-        "-# Each question can award Candy once per member in each reward cycle."
+        "-# One try per member • Candy is awarded once per question in each reward cycle."
     )
     components = [ui.TextDisplay(text)]
     if question_type == "multiple_choice":
@@ -1455,6 +1458,26 @@ def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, ans
     question = trivia_questions.find_one({"question_id": str(question_id), "enabled": True})
     if question is None:
         return "unavailable", None
+    # One try per member per question. The attempt is recorded atomically *before* the answer is
+    # judged, so a double click or a second tab can never get a second guess.
+    attempt = users.find_one_and_update(
+        {
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "trivia_claims": {"$ne": str(question_id)},
+            "trivia_attempts": {"$ne": str(question_id)},
+        },
+        {"$addToSet": {"trivia_attempts": str(question_id)}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if attempt is None:
+        record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)})
+        if record is None:
+            return "unavailable", None
+        balance = int(record.get("balance", 0))
+        if str(question_id) in (record.get("trivia_claims") or []):
+            return "already_claimed", balance
+        return "already_tried", balance
     question_type = question.get("question_type")
     if question_type == "multiple_choice":
         try:
@@ -1484,8 +1507,14 @@ def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, ans
     return "correct", int(updated.get("balance", 0))
 
 
+def trivia_answered_ids(record):
+    """Question ids this member is finished with in the current cycle: earned Candy OR used their one try."""
+    record = record or {}
+    return set(record.get("trivia_claims") or []) | set(record.get("trivia_attempts") or [])
+
+
 def reset_trivia_claims_for_loop(guild_id, user_id, record, active_question_ids):
-    claimed = record.get("trivia_claims") or []
+    claimed = set(record.get("trivia_claims") or []) | set(record.get("trivia_attempts") or [])
     if not active_question_ids or not all(question_id in claimed for question_id in active_question_ids):
         return None
     cycle = int(record.get("trivia_cycle", 0))
@@ -1500,7 +1529,7 @@ def reset_trivia_claims_for_loop(guild_id, user_id, record, active_question_ids)
         query["trivia_claims"] = {"$exists": False}
     return users.find_one_and_update(
         query,
-        {"$set": {"trivia_claims": []}, "$inc": {"trivia_cycle": 1}},
+        {"$set": {"trivia_claims": [], "trivia_attempts": []}, "$inc": {"trivia_cycle": 1}},
         return_document=ReturnDocument.AFTER,
     )
 
@@ -2448,7 +2477,7 @@ def economy_trivia_remove():
     result = trivia_questions.delete_one({"question_id": question_id})
     if not result.deleted_count:
         return redirect(url_for("economy_page", error="trivia_not_found"))
-    users.update_many({}, {"$pull": {"trivia_claims": question_id}})
+    users.update_many({}, {"$pull": {"trivia_claims": question_id, "trivia_attempts": question_id}})
     log_activity(
         "trivia_question_removed",
         user_id=user["id"],
@@ -3788,6 +3817,7 @@ def ensure_user(guild_id: int, user_id: int, username=None, display_name=None):
             "balance": 0,
             "inventory": [],
             "trivia_claims": [],
+            "trivia_attempts": [],
             "trivia_cycle": 0,
             "created_at": now_utc(),
         }
@@ -4321,14 +4351,14 @@ class HalloweenBot(commands.Cog):
             str(question.get("created_at") or ""),
             str(question.get("question_id") or ""),
         ))
-        claimed = set(member_record.get("trivia_claims") or [])
+        claimed = trivia_answered_ids(member_record)
         available = [question for question in questions if question.get("question_id") not in claimed]
         if not available:
             if not config["trivia_looping"]:
                 await interaction.response.send_message(
                     view=candy_notice_view(
                         "🎉 All caught up",
-                        "You have already earned Candy for every active trivia question.",
+                        "You have already answered every active trivia question.",
                         ok=True,
                     ),
                     ephemeral=True,
@@ -4345,7 +4375,7 @@ class HalloweenBot(commands.Cog):
             member_record = refreshed or await db(
                 users.find_one, {"guild_id": guild_id, "user_id": user_id},
             ) or member_record
-            claimed = set(member_record.get("trivia_claims") or [])
+            claimed = trivia_answered_ids(member_record)
             available = [question for question in questions if question.get("question_id") not in claimed]
             if not available:
                 await interaction.response.send_message(
