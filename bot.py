@@ -5059,7 +5059,7 @@ def daily_cooldown_view(member, next_at, next_reward, boost=None):
     return view
 
 
-def profile_candy_view(member, user, rank, next_daily=None):
+def profile_candy_view(member, user, rank, next_daily=None, is_self=True):
     """Components V2 card for /profile."""
     ui = discord.ui
     inventory = user.get("inventory", []) or []
@@ -5076,9 +5076,14 @@ def profile_candy_view(member, user, rank, next_daily=None):
         text = "**Latest items**\n" + "\n".join(shown) + (f"\n-# and {extra} more" if extra > 0 else "")
         items += [ui.Separator(), ui.TextDisplay(text[:1000])]
     if next_daily and next_daily > now_utc():
-        daily_text = f"⏰ Next daily reward <t:{int(next_daily.timestamp())}:R>"
+        subject = "Your" if is_self else f"{member.display_name}'s"
+        daily_text = f"⏰ {subject} next daily reward <t:{int(next_daily.timestamp())}:R>"
     else:
-        daily_text = "🎁 Your daily reward is ready — use **/daily**"
+        daily_text = (
+            "🎁 Your daily reward is ready — use **/daily**"
+            if is_self
+            else f"🎁 {member.display_name}'s daily reward is ready"
+        )
     items += [ui.Separator(), ui.TextDisplay(daily_text)]
     view = ui.LayoutView(timeout=None)
     view.add_item(ui.Container(*items, accent_colour=0xF97316))
@@ -5843,13 +5848,15 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(view=view, allowed_mentions=discord.AllowedMentions.none())
         view.message = await interaction.original_response()
 
-    @app_commands.command(name="profile", description="View your Candy profile.")
-    async def profile(self, interaction: discord.Interaction):
+    @app_commands.command(name="profile", description="View your or another member's Candy profile and inventory.")
+    @app_commands.describe(member="The member whose profile and inventory you want to view.")
+    async def profile(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         if not interaction.guild:
             await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
             return
         guild_id = interaction.guild.id
-        user = await db(ensure_user, guild_id, interaction.user.id, interaction.user.name, interaction.user.display_name)
+        target = member or interaction.user
+        user = await db(ensure_user, guild_id, target.id, target.name, target.display_name)
         rank = await db(users.count_documents, {"guild_id": guild_id, "balance": {"$gt": int(user.get("balance", 0))}}) + 1
         last_daily = user.get("last_daily")
         next_daily = None
@@ -5858,7 +5865,7 @@ class HalloweenBot(commands.Cog):
                 last_daily = last_daily.replace(tzinfo=timezone.utc)
             next_daily = last_daily + timedelta(hours=24)
         await interaction.response.send_message(
-            view=profile_candy_view(interaction.user, user, rank, next_daily),
+            view=profile_candy_view(target, user, rank, next_daily, is_self=target.id == interaction.user.id),
             allowed_mentions=discord.AllowedMentions.none())
 
 
