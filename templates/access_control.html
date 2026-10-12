@@ -222,6 +222,27 @@
 
     <div class="access-card">
       <div class="access-header">
+        <div><h2>🏰 Clan perks</h2><p class="muted">Set the shared Candy earned by clan members since they each joined that unlocks the 10% eligible-shop discount and the extra daily reward multiplier.</p></div>
+      </div>
+      {% if request.args.get('clan_saved') %}<div class="gl-flash ok">✓ Clan perk thresholds saved.</div>{% endif %}
+      {% if request.args.get('clan_error') %}<div class="gl-flash err">Those thresholds could not be saved. Use whole numbers from 0 to 1,000,000,000.</div>{% endif %}
+      {% if boost_guild_id %}
+      <form method="post" action="{{ url_for('access_control_clan_settings') }}" class="boost-form">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <label class="muted">Candy for shop discount
+          <input class="command-search" type="number" name="discount_threshold" min="0" max="1000000000" value="{{ clan_settings.discount_threshold }}" required>
+        </label>
+        <label class="muted">Candy for daily bonus
+          <input class="command-search" type="number" name="daily_threshold" min="0" max="1000000000" value="{{ clan_settings.daily_threshold }}" required>
+        </label>
+        <button type="submit" class="command-toggle enabled">Save clan thresholds</button>
+      </form>
+      <div class="boost-note">The clan starts with <strong>0 Candy</strong>. Only Candy earned after each member joins counts toward the shared progress. The daily bonus multiplies with other daily boosts.</div>
+      {% else %}<p class="muted">The bot is not connected to any servers right now.</p>{% endif %}
+    </div>
+
+    <div class="access-card">
+      <div class="access-header">
         <div>
           <h2>🎁 Daily Reward Boosts</h2>
           <p class="muted">Give members a larger daily Candy reward when they have a specific Discord role. This affects <strong>daily rewards only</strong> — not Trick-or-Treat, Give, Shop, or other Candy activities.</p>

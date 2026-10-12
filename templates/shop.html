@@ -50,7 +50,12 @@
       <div class="icon">{{ item.get('emoji','🎃')|emoji }}</div>
       <h2>{{ item.get('name','Shop Item') }}{% if not item.get('enabled',True) %}<span class="sale-status">Offsale</span>{% endif %}</h2>
       <div class="desc">{{ item.get('description','') }}</div>
-      <span class="price">🍬 {{ "{:,}".format(item.get('price',0)) }}</span>
+      <span class="price">🍬 {{ "{:,}".format(item.get('display_price',item.get('price',0))) }}</span>
+      {% if item.clan_discount_applied %}
+      <div class="desc" style="margin-top:8px">🏰 Clan 10% discount applied (was {{ "{:,}".format(item.get('price',0)) }} 🍬)</div>
+      {% elif item.get('clan_discount_excluded',False) %}
+      <div class="desc" style="margin-top:8px">Clan discount not available for this exclusive item.</div>
+      {% endif %}
       {% set mode = requirement_mode(item) %}
       {% if mode != 'everyone' %}
       <div class="desc" style="margin-top:12px">Requires {{ 'ALL' if mode=='all' else 'ANY' }} of the configured role(s).</div>
@@ -61,7 +66,7 @@
       {% if item.get('enabled',True) %}
         {% if session.get("discord_user") %}
         <form method="post" action="{{ url_for('shop_item_buy_web', item_id=item.get('item_id')) }}"
-              class="purchase-form" data-item-name="{{ item.get('name','Shop Item') }}" data-price="{{ item.get('price',0) }}">
+              class="purchase-form" data-item-name="{{ item.get('name','Shop Item') }}" data-price="{{ item.get('display_price',item.get('price',0)) }}">
           <button class="button" type="submit">Purchase</button>
         </form>
         {% else %}
