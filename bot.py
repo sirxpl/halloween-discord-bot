@@ -251,6 +251,57 @@ def clan_public_data(guild_id, clan):
     }
 
 
+def clan_member_list(guild_id, clan):
+    records = list(users.find(
+        {"guild_id": int(guild_id), "clan_id": str(clan["clan_id"])},
+        {"user_id": 1, "username": 1, "candy_earned_total": 1, "clan_candy_earned_at_join": 1},
+    ))
+    member_keys = [
+        (int(guild_id), int(record["user_id"]))
+        for record in records
+        if record.get("user_id") is not None
+    ]
+    discord_members = get_bot_members_for_display(member_keys)
+    badge_configs = get_badge_configs(guild_id)
+    clan_members = []
+    for record in records:
+        if record.get("user_id") is None:
+            continue
+        user_id = int(record["user_id"])
+        member = discord_members.get((int(guild_id), user_id))
+        avatar_url = None
+        if member:
+            try:
+                avatar_url = str(member.display_avatar.url)
+            except Exception:
+                log.exception("Could not load clan member avatar for %s", user_id)
+        badges, name_gradient, _, _ = badge_presentation_for_member(
+            user_id,
+            member,
+            badge_configs,
+            get_member_badge_preference(guild_id, user_id),
+        )
+        clan_members.append({
+            "user_id": user_id,
+            "name": f"@{member.name}" if member else (
+                f"@{record['username']}" if record.get("username") else "@Unknown User"
+            ),
+            "avatar_url": avatar_url,
+            "badges": badges,
+            "name_gradient": name_gradient,
+            "contributed": max(
+                0,
+                int(record.get("candy_earned_total", 0) or 0)
+                - int(record.get("clan_candy_earned_at_join", 0) or 0),
+            ),
+            "is_owner": user_id == int(clan["owner_id"]),
+        })
+    return sorted(
+        clan_members,
+        key=lambda member: (-member["contributed"], member["name"].casefold(), member["user_id"]),
+    )
+
+
 def clan_upload_data():
     uploaded = request.files.get("clan_icon")
     if uploaded is None or not uploaded.filename:
@@ -282,6 +333,7 @@ def clans_page():
         {"guild_id": guild_id, "clan_id": member_record.get("clan_id"), "status": "active"}
     ) if guild_id and member_record and member_record.get("clan_id") else None
     my_clan_data = clan_public_data(guild_id, my_clan) if my_clan else None
+    my_clan_members = clan_member_list(guild_id, my_clan) if my_clan else []
     clan_listing = [
         clan_public_data(guild_id, clan)
         for clan in clans.find({"guild_id": guild_id, "status": "active"}).sort("name", 1)
@@ -316,6 +368,7 @@ def clans_page():
         guild=guild,
         clans=clan_listing,
         my_clan=my_clan_data,
+        my_clan_members=my_clan_members,
         member_balance=int(member_record.get("balance", 0) or 0) if member_record else 0,
         my_clan_owner=bool(my_clan and int(my_clan["owner_id"]) == int(user["id"])),
         my_requests=my_requests,
