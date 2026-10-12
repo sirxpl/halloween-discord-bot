@@ -74,6 +74,8 @@ BADGE_TYPES = {
     "administrator": ("Administrator", "badges/administrator.png"),
     "carry-team": ("Carry Team", "badges/carry-team.png"),
     "staff": ("Staff", "badges/staff.png"),
+    "verified": ("Verified", "badges/verified.png"),
+    "verified-plus": ("Verified+", "badges/verified-plus.png"),
 }
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
