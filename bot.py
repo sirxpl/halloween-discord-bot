@@ -14,7 +14,7 @@ from jinja2 import ChoiceLoader, FunctionLoader
 from markupsafe import Markup, escape
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, jsonify, render_template, request, redirect, session, url_for
+from flask import Flask, Response, jsonify, render_template, request, redirect, session, url_for
 from flask_session import Session
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import PyMongoError
@@ -64,6 +64,11 @@ member_badge_preferences = db["member_badge_preferences"]
 arcane_level_rewards = db["arcane_level_rewards"]
 user_authorizations = db["user_authorizations"]
 oauth_transactions = db["oauth_transactions"]
+clans = db["clans"]
+clan_creation_requests = db["clan_creation_requests"]
+clan_join_requests = db["clan_join_requests"]
+clan_invites = db["clan_invites"]
+clan_config = db["clan_config"]
 
 # Bump this whenever templates/terms.html or templates/privacy.html change in a way people
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
@@ -77,10 +82,16 @@ BADGE_TYPES = {
     "verified": ("Verified", "badges/verified.png"),
     "verified-plus": ("Verified+", "badges/verified-plus.png"),
 }
+CLAN_DEFAULT_DISCOUNT_THRESHOLD = 5000
+CLAN_DEFAULT_DAILY_THRESHOLD = 5000
+CLAN_DISCOUNT_PERCENT = 10
+CLAN_DAILY_MULTIPLIER = 1.25
+CLAN_ICON_MAX_BYTES = 2 * 1024 * 1024
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
+app.config["MAX_CONTENT_LENGTH"] = CLAN_ICON_MAX_BYTES + 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
@@ -97,7 +108,7 @@ Session(app)
 def require_web_login_screen():
     if request.method not in {"GET", "HEAD"}:
         return None
-    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page", "authorize_page", "authorized_page"}
+    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page", "authorize_page", "authorized_page", "clan_icon"}
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
@@ -198,6 +209,519 @@ def announcements_page():
     return render_template("announcements.html")
 
 
+def clan_guild_options():
+    guilds = bot_guilds()
+    user = session.get("discord_user")
+    if user and is_admin(user["id"]):
+        return guilds
+    member_guild_ids = {
+        str(guild.get("id")) for guild in session.get("discord_guilds", [])
+    }
+    return [guild for guild in guilds if str(guild["id"]) in member_guild_ids]
+
+
+def send_clan_dm(user_id, message):
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        log.warning("Could not send clan notification to %s: Discord bot is offline.", user_id)
+        return False
+
+    async def send():
+        target = bot.get_user(int(user_id)) or await bot.fetch_user(int(user_id))
+        await target.send(message, allowed_mentions=discord.AllowedMentions.none())
+
+    try:
+        _run_on_bot_loop(bot, send(), 12)
+        return True
+    except Exception:
+        log.warning("Could not send clan notification to %s.", user_id, exc_info=True)
+        return False
+
+
+def clan_public_data(guild_id, clan):
+    progress = clan_progress(guild_id, clan)
+    return {
+        "clan_id": clan["clan_id"],
+        "name": clan["name"],
+        "description": clan.get("description", ""),
+        "owner_id": int(clan["owner_id"]),
+        "icon_url": url_for("clan_icon", guild_id=int(guild_id), clan_id=clan["clan_id"])
+            if clan.get("icon_data") else None,
+        **progress,
+    }
+
+
+def clan_upload_data():
+    uploaded = request.files.get("clan_icon")
+    if uploaded is None or not uploaded.filename:
+        return None, None
+    data = uploaded.stream.read(CLAN_ICON_MAX_BYTES + 1)
+    if not data or len(data) > CLAN_ICON_MAX_BYTES:
+        raise ValueError("icon_size")
+    mime_type = clan_image_mime(data)
+    if mime_type is None:
+        raise ValueError("icon_type")
+    return data, mime_type
+
+
+@app.get("/clans")
+def clans_page():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guilds = clan_guild_options()
+    wanted = str(request.args.get("guild") or session.get("clan_guild_id") or "")
+    guild = next((item for item in guilds if str(item["id"]) == wanted), None)
+    if guild is None and guilds:
+        guild = guilds[0]
+    if guild:
+        session["clan_guild_id"] = str(guild["id"])
+    guild_id = int(guild["id"]) if guild else None
+    member_record = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])}) if guild_id else None
+    my_clan = clans.find_one(
+        {"guild_id": guild_id, "clan_id": member_record.get("clan_id"), "status": "active"}
+    ) if guild_id and member_record and member_record.get("clan_id") else None
+    my_clan_data = clan_public_data(guild_id, my_clan) if my_clan else None
+    clan_listing = [
+        clan_public_data(guild_id, clan)
+        for clan in clans.find({"guild_id": guild_id, "status": "active"}).sort("name", 1)
+    ] if guild_id else []
+    my_requests = list(clan_join_requests.find({
+        "guild_id": guild_id, "clan_id": my_clan["clan_id"], "status": "pending",
+    }).sort("created_at", 1)) if my_clan and int(my_clan["owner_id"]) == int(user["id"]) else []
+    my_invites = list(clan_invites.find({
+        "guild_id": guild_id, "target_id": int(user["id"]), "status": "pending",
+    }).sort("created_at", -1)) if guild_id else []
+    for invite in my_invites:
+        invite["clan"] = clans.find_one({
+            "guild_id": guild_id, "clan_id": invite["clan_id"], "status": "active",
+        })
+    for invite in my_invites:
+        if invite.get("clan"):
+            invite["clan"] = clan_public_data(guild_id, invite["clan"])
+    creation_requests = list(clan_creation_requests.find({
+        "guild_id": guild_id, "status": "pending",
+    }).sort("created_at", 1)) if guild_id and is_admin(user["id"]) else []
+    pending_join_clan_ids = {
+        item["clan_id"] for item in clan_join_requests.find({
+            "guild_id": guild_id, "user_id": int(user["id"]), "status": "pending",
+        }, {"clan_id": 1})
+    } if guild_id else set()
+    review_id = request.args.get("review", "")
+    return render_template(
+        "clans.html",
+        user=user,
+        avatar_url=discord_avatar_url(user),
+        guilds=guilds,
+        guild=guild,
+        clans=clan_listing,
+        my_clan=my_clan_data,
+        member_balance=int(member_record.get("balance", 0) or 0) if member_record else 0,
+        my_clan_owner=bool(my_clan and int(my_clan["owner_id"]) == int(user["id"])),
+        my_requests=my_requests,
+        my_invites=my_invites,
+        creation_requests=creation_requests,
+        pending_join_clan_ids=pending_join_clan_ids,
+        review_id=review_id,
+        error=request.args.get("error"),
+        saved=request.args.get("saved"),
+    )
+
+
+@app.get("/clans/<int:guild_id>/<clan_id>/icon")
+def clan_icon(guild_id, clan_id):
+    clan = clans.find_one(
+        {"guild_id": int(guild_id), "clan_id": str(clan_id), "status": "active"},
+        {"icon_data": 1, "icon_mime": 1},
+    )
+    if not clan or not clan.get("icon_data") or clan.get("icon_mime") not in {
+        "image/png", "image/jpeg", "image/webp",
+    }:
+        return "", 404
+    response = Response(bytes(clan["icon_data"]), mimetype=clan["icon_mime"])
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.post("/clans/create")
+def clans_create():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        if str(guild_id) not in {str(item["id"]) for item in clan_guild_options()}:
+            raise ValueError("invalid_guild")
+        bot = BOT.get("instance")
+        guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+        if guild is None or get_bot_member(guild_id, user["id"]) is None:
+            raise ValueError("not_member")
+        if users.find_one({"guild_id": guild_id, "user_id": int(user["id"]), "clan_id": {"$exists": True}}):
+            raise ValueError("already_in_clan")
+        name = " ".join(request.form.get("name", "").split())
+        description = request.form.get("description", "").strip()
+        normalized_name = name.casefold()
+        icon_data, icon_mime = clan_upload_data()
+        if not 3 <= len(name) <= 32 or len(description) > 500:
+            raise ValueError("invalid")
+        if clans.find_one({"guild_id": guild_id, "normalized_name": normalized_name, "status": "active"}):
+            raise ValueError("name_taken")
+        if clan_creation_requests.find_one({
+            "guild_id": guild_id, "normalized_name": normalized_name, "status": "pending",
+        }):
+            raise ValueError("name_pending")
+        if clan_creation_requests.find_one({
+            "guild_id": guild_id, "creator_id": int(user["id"]), "status": "pending",
+        }):
+            raise ValueError("request_pending")
+    except ValueError as exc:
+        error = str(exc) if str(exc) in {
+            "invalid_guild", "not_member", "already_in_clan", "name_taken", "name_pending",
+            "request_pending", "icon_size", "icon_type",
+        } else "invalid"
+        return redirect(url_for("clans_page", guild=guild_id_raw, error=error))
+
+    request_id = secrets.token_urlsafe(12)
+    clan_creation_requests.insert_one({
+        "request_id": request_id,
+        "guild_id": guild_id,
+        "creator_id": int(user["id"]),
+        "creator_name": user.get("global_name") or user.get("username", "Member"),
+        "name": name,
+        "normalized_name": normalized_name,
+        "description": description,
+        "icon_data": icon_data,
+        "icon_mime": icon_mime,
+        "status": "pending",
+        "created_at": now_utc(),
+    })
+    review_url = url_for("clans_page", guild=guild_id, review=request_id, _external=True)
+    for admin_id in ADMIN_USER_IDS:
+        send_clan_dm(
+            admin_id,
+            f"New clan creation request for **{name}** in **{guild.name}** from "
+            f"{user.get('global_name') or user.get('username', 'a member')}.\n"
+            f"Review it here: {review_url}",
+        )
+    return redirect(url_for("clans_page", guild=guild_id, saved="request_submitted"))
+
+
+@app.post("/clans/creation/<request_id>")
+def clans_creation_decision(request_id):
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    action = request.form.get("action")
+    creation = clan_creation_requests.find_one({"request_id": request_id, "status": "pending"})
+    if action not in {"approve", "deny"} or creation is None:
+        return redirect(url_for("clans_page", error="request_unavailable"))
+    guild_id = int(creation["guild_id"])
+    claimed = clan_creation_requests.update_one(
+        {"request_id": request_id, "status": "pending"},
+        {"$set": {"status": "processing", "reviewed_by": int(user["id"])}},
+    )
+    if not claimed.modified_count:
+        return redirect(url_for("clans_page", guild=guild_id, error="request_unavailable"))
+    if action == "deny":
+        clan_creation_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "denied", "reviewed_at": now_utc()}},
+        )
+        send_clan_dm(creation["creator_id"], f"Your request to create **{creation['name']}** was not approved.")
+        return redirect(url_for("clans_page", guild=guild_id, saved="creation_denied"))
+
+    bot = BOT.get("instance")
+    guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+    owner_id = int(creation["creator_id"])
+    if (guild is None or get_bot_member(guild_id, owner_id) is None
+            or clans.find_one({"guild_id": guild_id, "normalized_name": creation["normalized_name"], "status": "active"})):
+        clan_creation_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "pending"}, "$unset": {"reviewed_by": ""}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="creation_failed"))
+    clan = {
+        "guild_id": guild_id,
+        "clan_id": secrets.token_urlsafe(12),
+        "name": creation["name"],
+        "normalized_name": creation["normalized_name"],
+        "description": creation.get("description", ""),
+        "owner_id": owner_id,
+        "icon_data": creation.get("icon_data"),
+        "icon_mime": creation.get("icon_mime"),
+        "status": "active",
+        "created_at": now_utc(),
+    }
+    clans.insert_one(clan)
+    assigned = clan_member_assign(guild_id, owner_id, clan)
+    if assigned is None:
+        clans.delete_one({"guild_id": guild_id, "clan_id": clan["clan_id"]})
+        clan_creation_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "pending"}, "$unset": {"reviewed_by": ""}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="creator_in_clan"))
+    clan_creation_requests.update_one(
+        {"request_id": request_id, "status": "processing"},
+        {"$set": {"status": "approved", "reviewed_at": now_utc(), "clan_id": clan["clan_id"]}},
+    )
+    send_clan_dm(owner_id, f"Your clan **{clan['name']}** has been approved. Visit {url_for('clans_page', guild=guild_id, _external=True)} to manage it.")
+    return redirect(url_for("clans_page", guild=guild_id, saved="creation_approved"))
+
+
+@app.post("/clans/join/<clan_id>")
+def clans_join_request(clan_id):
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        if str(guild_id) not in {str(item["id"]) for item in clan_guild_options()}:
+            raise ValueError
+        clan = clans.find_one({"guild_id": guild_id, "clan_id": clan_id, "status": "active"})
+        if clan is None or get_bot_member(guild_id, user["id"]) is None:
+            raise ValueError
+        current = users.find_one({"guild_id": guild_id, "user_id": int(user["id"]), "clan_id": {"$exists": True}})
+        if current:
+            raise ValueError
+        if clan_join_requests.find_one({
+            "guild_id": guild_id, "clan_id": clan_id, "user_id": int(user["id"]), "status": "pending",
+        }):
+            raise ValueError
+    except (TypeError, ValueError):
+        return redirect(url_for("clans_page", guild=guild_id_raw, error="join_unavailable"))
+    request_id = secrets.token_urlsafe(12)
+    clan_join_requests.insert_one({
+        "request_id": request_id,
+        "guild_id": guild_id,
+        "clan_id": clan_id,
+        "user_id": int(user["id"]),
+        "username": user.get("global_name") or user.get("username", "Member"),
+        "status": "pending",
+        "created_at": now_utc(),
+    })
+    review_url = url_for("clans_page", guild=guild_id, review=request_id, _external=True)
+    send_clan_dm(
+        clan["owner_id"],
+        f"{user.get('global_name') or user.get('username', 'A member')} requested to join **{clan['name']}**.\n"
+        f"Review the request here: {review_url}",
+    )
+    return redirect(url_for("clans_page", guild=guild_id, saved="join_requested"))
+
+
+@app.post("/clans/invite")
+def clans_invite():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    guild_id_raw = request.form.get("guild_id", "")
+    target_raw = request.form.get("member_id", "").strip()
+    try:
+        guild_id = int(guild_id_raw)
+        target_id = int(target_raw)
+        if str(guild_id) not in {str(item["id"]) for item in clan_guild_options()}:
+            raise ValueError
+        member_record = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+        clan = clans.find_one({
+            "guild_id": guild_id,
+            "clan_id": member_record.get("clan_id") if member_record else None,
+            "status": "active",
+        })
+        if clan is None or get_bot_member(guild_id, target_id) is None:
+            raise ValueError
+        target_record = users.find_one({"guild_id": guild_id, "user_id": target_id, "clan_id": {"$exists": True}})
+        if target_record or target_id == int(user["id"]):
+            raise ValueError
+        if clan_invites.find_one({
+            "guild_id": guild_id, "clan_id": clan["clan_id"], "target_id": target_id, "status": "pending",
+        }):
+            raise ValueError
+    except (TypeError, ValueError):
+        return redirect(url_for("clans_page", guild=guild_id_raw, error="invite_invalid"))
+    invite_id = secrets.token_urlsafe(12)
+    clan_invites.insert_one({
+        "invite_id": invite_id,
+        "guild_id": guild_id,
+        "clan_id": clan["clan_id"],
+        "invited_by": int(user["id"]),
+        "target_id": target_id,
+        "status": "pending",
+        "created_at": now_utc(),
+    })
+    invitation_url = url_for("clans_page", guild=guild_id, _external=True)
+    send_clan_dm(
+        target_id,
+        f"You were invited to join **{clan['name']}** in **{next((item['name'] for item in clan_guild_options() if str(item['id']) == str(guild_id)), 'a server')}**.\n"
+        f"Sign in and accept or decline the invitation here: {invitation_url}",
+    )
+    return redirect(url_for("clans_page", guild=guild_id, saved="invite_sent"))
+
+
+@app.post("/clans/invite/<invite_id>/decision")
+def clans_invite_decision(invite_id):
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    invitation = clan_invites.find_one({
+        "invite_id": invite_id, "target_id": int(user["id"]), "status": "pending",
+    })
+    if invitation is None or request.form.get("action") not in {"accept", "decline"}:
+        return redirect(url_for("clans_page", error="invite_unavailable"))
+    guild_id = int(invitation["guild_id"])
+    claim = clan_invites.update_one(
+        {"invite_id": invite_id, "target_id": int(user["id"]), "status": "pending"},
+        {"$set": {"status": "processing"}},
+    )
+    if not claim.modified_count:
+        return redirect(url_for("clans_page", guild=guild_id, error="invite_unavailable"))
+    action = request.form["action"]
+    if action == "decline":
+        clan_invites.update_one(
+            {"invite_id": invite_id, "status": "processing"},
+            {"$set": {"status": "declined", "responded_at": now_utc()}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, saved="invite_declined"))
+    clan = clans.find_one({
+        "guild_id": guild_id, "clan_id": invitation["clan_id"], "status": "active",
+    })
+    if clan is None or get_bot_member(guild_id, user["id"]) is None:
+        clan_invites.update_one(
+            {"invite_id": invite_id, "status": "processing"},
+            {"$set": {"status": "pending"}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="invite_unavailable"))
+    assigned = clan_member_assign(guild_id, user["id"], clan)
+    if assigned is None:
+        clan_invites.update_one(
+            {"invite_id": invite_id, "status": "processing"},
+            {"$set": {"status": "pending"}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="already_in_clan"))
+    clan_invites.update_one(
+        {"invite_id": invite_id, "status": "processing"},
+        {"$set": {"status": "accepted", "responded_at": now_utc()}},
+    )
+    clan_withdraw_pending_membership_requests(guild_id, user["id"])
+    return redirect(url_for("clans_page", guild=guild_id, saved="invite_accepted"))
+
+
+@app.post("/clans/join-request/<request_id>/decision")
+def clans_join_decision(request_id):
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    join_request = clan_join_requests.find_one({"request_id": request_id, "status": "pending"})
+    if join_request is None or request.form.get("action") not in {"approve", "deny"}:
+        return redirect(url_for("clans_page", error="request_unavailable"))
+    guild_id = int(join_request["guild_id"])
+    clan = clans.find_one({
+        "guild_id": guild_id, "clan_id": join_request["clan_id"], "owner_id": int(user["id"]), "status": "active",
+    })
+    if clan is None:
+        return "Forbidden", 403
+    claim = clan_join_requests.update_one(
+        {"request_id": request_id, "status": "pending"},
+        {"$set": {"status": "processing"}},
+    )
+    if not claim.modified_count:
+        return redirect(url_for("clans_page", guild=guild_id, error="request_unavailable"))
+    action = request.form["action"]
+    if action == "deny":
+        clan_join_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "denied", "responded_at": now_utc()}},
+        )
+        send_clan_dm(join_request["user_id"], f"Your request to join **{clan['name']}** was not approved.")
+        return redirect(url_for("clans_page", guild=guild_id, saved="join_denied"))
+    if get_bot_member(guild_id, join_request["user_id"]) is None:
+        clan_join_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "pending"}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="join_unavailable"))
+    assigned = clan_member_assign(guild_id, join_request["user_id"], clan)
+    if assigned is None:
+        clan_join_requests.update_one(
+            {"request_id": request_id, "status": "processing"},
+            {"$set": {"status": "pending"}},
+        )
+        return redirect(url_for("clans_page", guild=guild_id, error="already_in_clan"))
+    clan_join_requests.update_one(
+        {"request_id": request_id, "status": "processing"},
+        {"$set": {"status": "approved", "responded_at": now_utc()}},
+    )
+    clan_withdraw_pending_membership_requests(guild_id, join_request["user_id"])
+    send_clan_dm(join_request["user_id"], f"Your request to join **{clan['name']}** was approved.")
+    return redirect(url_for("clans_page", guild=guild_id, saved="join_approved"))
+
+
+@app.post("/clans/leave")
+def clans_leave():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+    except (TypeError, ValueError):
+        return redirect(url_for("clans_page", error="clan_unavailable"))
+    member_record = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+    clan = clans.find_one({
+        "guild_id": guild_id,
+        "clan_id": member_record.get("clan_id") if member_record else None,
+        "status": "active",
+    })
+    if clan is None:
+        return redirect(url_for("clans_page", guild=guild_id, error="clan_unavailable"))
+    clan_member_departure(guild_id, user["id"], clan["clan_id"])
+    clan_member_clear(guild_id, user["id"])
+    return redirect(url_for("clans_page", guild=guild_id, saved="left_clan"))
+
+
+@app.post("/clans/settings")
+def clans_settings():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_record = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+        clan = clans.find_one({
+            "guild_id": guild_id,
+            "clan_id": member_record.get("clan_id") if member_record else None,
+            "owner_id": int(user["id"]),
+            "status": "active",
+        })
+        name = " ".join(request.form.get("name", "").split())
+        description = request.form.get("description", "").strip()
+        icon_data, icon_mime = clan_upload_data()
+        if clan is None or not 3 <= len(name) <= 32 or len(description) > 500:
+            raise ValueError
+        normalized_name = name.casefold()
+        if clans.find_one({
+            "guild_id": guild_id,
+            "normalized_name": normalized_name,
+            "clan_id": {"$ne": clan["clan_id"]},
+            "status": "active",
+        }):
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        error = str(exc) if str(exc) in {"icon_size", "icon_type"} else "clan_settings"
+        return redirect(url_for("clans_page", guild=request.form.get("guild_id", ""), error=error))
+    update = {
+        "name": name,
+        "normalized_name": normalized_name,
+        "description": description,
+        "updated_at": now_utc(),
+    }
+    if icon_data is not None:
+        update.update({"icon_data": icon_data, "icon_mime": icon_mime})
+    clans.update_one({"guild_id": guild_id, "clan_id": clan["clan_id"]}, {"$set": update})
+    return redirect(url_for("clans_page", guild=guild_id, saved="clan_updated"))
+
+
 @app.get("/shop")
 def shop_page():
     guild = selected_guild()
@@ -210,6 +734,12 @@ def shop_page():
             {"enabled": False, "show_when_disabled": True},
         ],
     }).sort("price", 1))
+    user = session.get("discord_user")
+    clan_perks = member_clan_perks(guild_id, user["id"]) if user and guild_id > 0 else None
+    for item in items:
+        item["display_price"], item["clan_discount_applied"] = effective_shop_price(
+            guild_id, user["id"], item, clan_perks,
+        ) if user and guild_id > 0 else (int(item.get("price", 0)), False)
     result = request.args.get("role_result")
     purchase_message = SHOP_RESULT_MESSAGES.get(result) if result else None
     return render_template("shop.html", items=items, guild=guild, purchase_message=purchase_message,
@@ -289,6 +819,7 @@ def shop_panel_save():
         price = int(request.form["price"])
         enabled = request.form.get("enabled") == "on"
         show_when_disabled = request.form.get("show_when_disabled") == "on"
+        clan_discount_excluded = request.form.get("clan_discount_excluded") == "on"
         requirement_mode = request.form.get("requirement_mode", "everyone").lower()
         required_role_values = request.form.getlist("required_role_ids")
         if any(not str(value).isdigit() for value in required_role_values):
@@ -324,6 +855,7 @@ def shop_panel_save():
         item_data = {"name": name,
             "description": description or "A Halloween shop item.", "emoji": emoji, "price": price,
             "type": item_type, "enabled": enabled, "show_when_disabled": show_when_disabled,
+            "clan_discount_excluded": clan_discount_excluded,
             "required_role_ids": required_role_ids,
             "requirement_mode": requirement_mode, "reward": reward,
             "updated_at": now, "updated_by": int(user["id"])}
@@ -393,9 +925,12 @@ def shop_item_buy_web(item_id):
     result = purchase_shop_item(int(guild["id"]), int(user["id"]), item_id)
     redirect_args = {"guild": guild["id"], "role_result": result}
     if result == "success" and item_before_purchase:
+        paid_price, _ = effective_shop_price(
+            int(guild["id"]), int(user["id"]), item_before_purchase,
+        )
         redirect_args.update({
             "item_name": item_before_purchase.get("name", "Shop Item"),
-            "price": int(item_before_purchase.get("price", 0)),
+            "price": paid_price,
         })
     return redirect(url_for("shop_page", **redirect_args))
 
@@ -1137,7 +1672,11 @@ def purchase_shop_item(guild_id, user_id, item_id):
     member = get_fresh_member(guild_id, user_id)
     if member is None: return "member_missing"
     if not member_meets_shop_requirements(member, item): return "requirements"
-    price = int(item.get("price", 0))
+    original_price = int(item.get("price", 0))
+    clan_perks = member_clan_perks(guild_id, user_id)
+    price, clan_discount_applied = effective_shop_price(
+        guild_id, user_id, item, clan_perks,
+    )
     if price < 1: return "unavailable"
 
     role = None
@@ -1157,6 +1696,9 @@ def purchase_shop_item(guild_id, user_id, item_id):
                        "emoji": item.get("emoji", "🎃"), "description": item.get("description", ""),
                        "price": price, "type": item.get("type", "custom"), "purchased_at": purchased_at,
                        "purchase_id": purchase_id}
+    if clan_discount_applied:
+        inventory_entry["original_price"] = original_price
+        inventory_entry["discount_percent"] = CLAN_DISCOUNT_PERCENT
     if role is not None:
         inventory_entry["role_id"] = role.id
     charged = False
@@ -1203,7 +1745,9 @@ def purchase_shop_item(guild_id, user_id, item_id):
     try:
         log_activity("shop_purchase", user_id, member.name, guild_id, price,
                      {"item_id": item["item_id"], "item": item.get("name"),
-                      "purchase_id": purchase_id, "type": item.get("type", "custom")})
+                      "purchase_id": purchase_id, "type": item.get("type", "custom"),
+                      "original_price": original_price,
+                      "clan_discount_percent": CLAN_DISCOUNT_PERCENT if clan_discount_applied else 0})
     except Exception:
         log.exception("Purchase succeeded but the activity log entry failed")
     return "success"
@@ -1477,6 +2021,161 @@ def set_economy_config(daily_reward, trick_or_treat_min, trick_or_treat_max, tri
     )
 
 
+def get_clan_config(guild_id):
+    record = clan_config.find_one({"guild_id": int(guild_id)}) or {}
+    try:
+        discount_threshold = int(record.get("discount_threshold", CLAN_DEFAULT_DISCOUNT_THRESHOLD))
+        daily_threshold = int(record.get("daily_threshold", CLAN_DEFAULT_DAILY_THRESHOLD))
+    except (TypeError, ValueError):
+        discount_threshold = CLAN_DEFAULT_DISCOUNT_THRESHOLD
+        daily_threshold = CLAN_DEFAULT_DAILY_THRESHOLD
+    return {
+        "discount_threshold": max(0, min(discount_threshold, 1_000_000_000)),
+        "daily_threshold": max(0, min(daily_threshold, 1_000_000_000)),
+    }
+
+
+def set_clan_config(guild_id, discount_threshold, daily_threshold, updated_by):
+    clan_config.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {
+            "guild_id": int(guild_id),
+            "discount_threshold": int(discount_threshold),
+            "daily_threshold": int(daily_threshold),
+            "updated_at": now_utc(),
+            "updated_by": int(updated_by),
+        }},
+        upsert=True,
+    )
+
+
+def clan_progress(guild_id, clan):
+    config = get_clan_config(guild_id)
+    earned = 0
+    members = list(users.find(
+        {"guild_id": int(guild_id), "clan_id": str(clan["clan_id"])},
+        {"candy_earned_total": 1, "clan_candy_earned_at_join": 1},
+    ))
+    for member in members:
+        total = int(member.get("candy_earned_total", 0) or 0)
+        joined_at = int(member.get("clan_candy_earned_at_join", total) or 0)
+        earned += max(0, total - joined_at)
+    return {
+        "earned": earned,
+        "member_count": len(members),
+        "discount_threshold": config["discount_threshold"],
+        "daily_threshold": config["daily_threshold"],
+        "discount_unlocked": earned >= config["discount_threshold"],
+        "daily_unlocked": earned >= config["daily_threshold"],
+    }
+
+
+def member_clan_perks(guild_id, user_id):
+    member_record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) or {}
+    clan_id = member_record.get("clan_id")
+    clan = clans.find_one({"guild_id": int(guild_id), "clan_id": str(clan_id)}) if clan_id else None
+    if clan is None:
+        return None
+    progress = clan_progress(guild_id, clan)
+    return {"clan": clan, **progress}
+
+
+def effective_shop_price(guild_id, user_id, item, clan_perks=None):
+    price = max(0, int(item.get("price", 0) or 0))
+    if item.get("clan_discount_excluded", False):
+        return price, False
+    perks = clan_perks if clan_perks is not None else member_clan_perks(guild_id, user_id)
+    if not perks or not perks["discount_unlocked"]:
+        return price, False
+    return max(1, (price * (100 - CLAN_DISCOUNT_PERCENT) + 50) // 100), True
+
+
+def clan_member_assign(guild_id, user_id, clan):
+    if users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) is None:
+        ensure_user(guild_id, user_id)
+    return users.find_one_and_update(
+        {
+            "guild_id": int(guild_id),
+            "user_id": int(user_id),
+            "$or": [
+                {"clan_id": {"$exists": False}},
+                {"clan_id": None},
+                {"clan_id": ""},
+            ],
+        },
+        [{"$set": {
+            "clan_id": str(clan["clan_id"]),
+            "clan_candy_earned_at_join": {"$ifNull": ["$candy_earned_total", 0]},
+            "clan_joined_at": now_utc(),
+        }}],
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+def clan_member_clear(guild_id, user_id):
+    return users.update_one(
+        {"guild_id": int(guild_id), "user_id": int(user_id)},
+        {"$unset": {
+            "clan_id": "",
+            "clan_candy_earned_at_join": "",
+            "clan_joined_at": "",
+        }},
+    )
+
+
+def clan_withdraw_pending_membership_requests(guild_id, user_id):
+    response = {"status": "withdrawn", "responded_at": now_utc()}
+    query = {"guild_id": int(guild_id), "user_id": int(user_id), "status": "pending"}
+    clan_join_requests.update_many(query, {"$set": response})
+    clan_invites.update_many(
+        {"guild_id": int(guild_id), "target_id": int(user_id), "status": "pending"},
+        {"$set": response},
+    )
+
+
+def clan_member_departure(guild_id, user_id, clan_id):
+    clan = clans.find_one({
+        "guild_id": int(guild_id),
+        "clan_id": str(clan_id),
+        "status": "active",
+        "owner_id": int(user_id),
+    })
+    if clan is None:
+        return
+    next_owner = users.find({
+        "guild_id": int(guild_id),
+        "clan_id": str(clan_id),
+        "user_id": {"$ne": int(user_id)},
+    }).sort("clan_joined_at", 1).limit(1)
+    next_owner = next(iter(next_owner), None)
+    if next_owner:
+        clans.update_one(
+            {"guild_id": int(guild_id), "clan_id": str(clan_id), "owner_id": int(user_id)},
+            {"$set": {"owner_id": int(next_owner["user_id"]), "updated_at": now_utc()}},
+        )
+        send_clan_dm(next_owner["user_id"], f"You are now the creator of **{clan['name']}**.")
+        return
+    clans.delete_one({"guild_id": int(guild_id), "clan_id": str(clan_id), "owner_id": int(user_id)})
+    clan_join_requests.update_many(
+        {"guild_id": int(guild_id), "clan_id": str(clan_id), "status": "pending"},
+        {"$set": {"status": "withdrawn"}},
+    )
+    clan_invites.update_many(
+        {"guild_id": int(guild_id), "clan_id": str(clan_id), "status": "pending"},
+        {"$set": {"status": "withdrawn"}},
+    )
+
+
+def clan_image_mime(data):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def roll_trick_or_treat_jackpots(jackpots):
     """Independently roll each configured jackpot; return the total and every prize won."""
     wins = [
@@ -1528,7 +2227,10 @@ def resolve_trivia_answer(guild_id, user_id, question_id, answer_index=None, ans
             "user_id": int(user_id),
             "trivia_claims": {"$ne": str(question_id)},
         },
-        {"$inc": {"balance": reward}, "$addToSet": {"trivia_claims": str(question_id)}},
+        {"$inc": {
+            "balance": reward,
+            "candy_earned_total": reward,
+        }, "$addToSet": {"trivia_claims": str(question_id)}},
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
@@ -1599,14 +2301,14 @@ def remove_daily_boost(guild_id, role_id):
     daily_boosts.delete_one({"guild_id": int(guild_id), "role_id": int(role_id)})
 
 
-def calculate_daily_reward(base_reward, role_ids, guild_id):
+def calculate_daily_reward(base_reward, role_ids, guild_id, clan_daily_bonus=False):
     boosts = get_daily_boosts(guild_id)
     role_ids = {int(role_id) for role_id in role_ids}
     matching = [boost for boost in boosts if int(boost.get("role_id", 0)) in role_ids]
-    if not matching:
-        return int(base_reward), None
-    boost = max(matching, key=lambda item: float(item.get("multiplier", 1)))
-    multiplier = float(boost.get("multiplier", 1))
+    boost = max(matching, key=lambda item: float(item.get("multiplier", 1))) if matching else None
+    multiplier = float(boost.get("multiplier", 1)) if boost else 1.0
+    if clan_daily_bonus:
+        multiplier *= CLAN_DAILY_MULTIPLIER
     return max(1, int(round(int(base_reward) * multiplier))), boost
 
 
@@ -1860,6 +2562,8 @@ LOG_EVENTS = {
     "trivia_question_removed": ("admin", "🗑️", "Trivia Question Removed", 0),
     "trivia_looping":       ("admin", "🔄", "Trivia Looping Updated", 0),
     "trivia_shuffle":       ("admin", "🔀", "Trivia Shuffle Updated", 0),
+    "clan_perks_updated":   ("admin", "🏰", "Clan Perks Updated", 0),
+    "clan_member_admin":    ("admin", "🏰", "Clan Membership Changed", 0),
     "arcane_level_bonus":  ("rewards", "⭐", "Arcane Level Bonus", +1),
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
@@ -1876,6 +2580,7 @@ DETAIL_LABELS = {
     "changed_by": "Changed by", "recipient_id": "Recipient", "boost_role": "Boost role",
     "role_id": "Role", "role_name": "Role name", "control": "Control", "level": "Level",
     "trick_or_treat_min": "Trick-or-treat min", "trick_or_treat_max": "Trick-or-treat max",
+    "discount_threshold": "Clan discount threshold", "daily_threshold": "Clan daily threshold",
     "daily_reward": "Daily reward", "rule_count": "Rules", "item": "Item",
     "item_id": "Item ID", "purchase_id": "Purchase ID", "refunded": "Refunded",
     "removed_by": "Removed by", "question_id": "Question ID", "question_type": "Question type",
@@ -2853,6 +3558,16 @@ def users_page():
             )
             record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
             record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
+            current_clan_id = record.get("clan_id")
+            record["clan"] = clans.find_one({
+                "guild_id": int(record.get("guild_id", 0)),
+                "clan_id": current_clan_id,
+                "status": "active",
+            }) if current_clan_id else None
+            record["available_clans"] = list(clans.find(
+                {"guild_id": int(record.get("guild_id", 0)), "status": "active"},
+                {"clan_id": 1, "name": 1},
+            ).sort("name", 1))
             record["purchases"] = []
             for purchase in record.get("inventory", []) or []:
                 if not isinstance(purchase, dict):
@@ -2928,6 +3643,57 @@ def users_candy():
         return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
     except (TypeError, ValueError):
         return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+
+
+@app.post("/users/clan")
+def users_clan():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    search = request.form.get("q", "")
+    try:
+        guild_id = int(request.form.get("guild_id", ""))
+        member_id = int(request.form.get("member_id", ""))
+        clan_id = request.form.get("clan_id", "").strip()
+        member_record = users.find_one({"guild_id": guild_id, "user_id": member_id}) or {}
+        previous_clan_id = member_record.get("clan_id")
+        if clan_id and clan_id == previous_clan_id:
+            saved = "clan_assigned"
+        else:
+            if clan_id:
+                bot = BOT.get("instance")
+                guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+                clan = clans.find_one({
+                    "guild_id": guild_id,
+                    "clan_id": clan_id,
+                    "status": "active",
+                })
+                if guild is None or clan is None or get_bot_member(guild_id, member_id) is None:
+                    raise ValueError
+            if previous_clan_id:
+                clan_member_departure(guild_id, member_id, previous_clan_id)
+                clan_member_clear(guild_id, member_id)
+            if clan_id:
+                if clan_member_assign(guild_id, member_id, clan) is None:
+                    raise ValueError
+                clan_withdraw_pending_membership_requests(guild_id, member_id)
+                saved = "clan_assigned"
+            else:
+                clan_member_clear(guild_id, member_id)
+                saved = "clan_removed"
+        log_activity(
+            "clan_member_admin",
+            user_id=member_id,
+            guild_id=guild_id,
+            details={
+                "changed_by": user["id"],
+                "previous_clan_id": previous_clan_id,
+                "clan_id": clan_id or None,
+            },
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for("users_page", q=search, error="clan"))
+    return redirect(url_for("users_page", q=search, saved=saved))
 
 
 @app.post("/users/purchase/remove")
@@ -3129,6 +3895,10 @@ def access_control_page():
         "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in cooldown_config["rules"]],
     }
     badge_configs = get_badge_configs(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
+    clan_settings = get_clan_config(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {
+        "discount_threshold": CLAN_DEFAULT_DISCOUNT_THRESHOLD,
+        "daily_threshold": CLAN_DEFAULT_DAILY_THRESHOLD,
+    }
     return render_template(
         "access_control.html",
         user=user,
@@ -3141,6 +3911,7 @@ def access_control_page():
         boost_roles=boost_roles,
         badge_configs=badge_configs,
         badge_types=[(key, value[0]) for key, value in BADGE_TYPES.items()],
+        clan_settings=clan_settings,
         daily_boosts=saved_daily_boosts,
         limit_cards=limit_cards,
         give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
@@ -3288,6 +4059,45 @@ def access_control_member_control():
     except (TypeError, ValueError):
         return redirect(url_for("access_control_page", error="invalid_member"))
     return redirect(url_for("access_control_page", saved="member"))
+
+
+@app.post("/access-control/clan-settings")
+def access_control_clan_settings():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        bot = BOT.get("instance")
+        if not bot or bot.is_closed() or bot.get_guild(guild_id) is None:
+            raise ValueError
+        discount_threshold = int(request.form.get("discount_threshold", ""))
+        daily_threshold = int(request.form.get("daily_threshold", ""))
+        if not 0 <= discount_threshold <= 1_000_000_000:
+            raise ValueError
+        if not 0 <= daily_threshold <= 1_000_000_000:
+            raise ValueError
+        set_clan_config(guild_id, discount_threshold, daily_threshold, user["id"])
+        log_activity(
+            "clan_perks_updated",
+            user_id=user["id"],
+            username=user.get("username"),
+            guild_id=guild_id,
+            details={
+                "discount_threshold": discount_threshold,
+                "daily_threshold": daily_threshold,
+            },
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for(
+            "access_control_page", boost_guild=guild_id_raw, clan_error="settings",
+        ))
+    return redirect(url_for(
+        "access_control_page", boost_guild=guild_id, clan_saved="1",
+    ))
 
 
 @app.post("/access-control/daily-boost")
@@ -3501,6 +4311,7 @@ def daily_page():
     daily_reward = get_economy_config()["daily_reward"]
     boost = None
     reward = daily_reward
+    daily_bonus = False
     if user:
         # Only show servers that both the bot and the signed-in user share.
         guilds = [g for g in bot_guilds()
@@ -3521,8 +4332,10 @@ def daily_page():
                     next_daily = candidate
             member = get_bot_member(guild_id, user_id)
             if member:
+                perks = member_clan_perks(guild_id, user_id)
+                daily_bonus = bool(perks and perks["daily_unlocked"])
                 reward, boost = calculate_daily_reward(
-                    daily_reward, [role.id for role in member.roles], guild_id
+                    daily_reward, [role.id for role in member.roles], guild_id, daily_bonus
                 )
     return render_template(
         "daily.html",
@@ -3533,6 +4346,7 @@ def daily_page():
         daily_reward=reward,
         base_daily_reward=daily_reward,
         daily_boost=boost,
+        clan_daily_bonus=daily_bonus,
         daily_guilds=guilds,
         daily_error=request.args.get("error"),
     )
@@ -3560,8 +4374,10 @@ def daily_claim():
         return redirect(url_for("daily_page", guild=guild_id, error="not_member"))
 
     config = get_economy_config()
+    perks = member_clan_perks(guild_id, user_id)
+    daily_bonus = bool(perks and perks["daily_unlocked"])
     reward, boost = calculate_daily_reward(
-        config["daily_reward"], [role.id for role in member.roles], guild_id
+        config["daily_reward"], [role.id for role in member.roles], guild_id, daily_bonus
     )
     now = now_utc()
     ensure_user(
@@ -3580,7 +4396,10 @@ def daily_claim():
                 {"last_daily": {"$lte": cutoff}},
             ],
         },
-        {"$set": {"last_daily": now}, "$inc": {"balance": reward}},
+        {"$set": {"last_daily": now}, "$inc": {
+            "balance": reward,
+            "candy_earned_total": reward,
+        }},
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
@@ -3595,6 +4414,7 @@ def daily_claim():
         details={
             "boost_role": boost.get("role_name") if boost else None,
             "multiplier": boost.get("multiplier") if boost else 1,
+            "clan_multiplier": CLAN_DAILY_MULTIPLIER if daily_bonus else 1,
             "source": "web_daily",
         },
     )
@@ -3889,10 +4709,13 @@ def ensure_user(guild_id: int, user_id: int, username=None, display_name=None):
     )
 
 
-def add_candy(guild_id: int, user_id: int, amount: int):
+def add_candy(guild_id: int, user_id: int, amount: int, counts_as_earned=False):
+    increments = {"balance": amount}
+    if counts_as_earned and int(amount) > 0:
+        increments["candy_earned_total"] = int(amount)
     return users.find_one_and_update(
         {"guild_id": guild_id, "user_id": user_id},
-        {"$inc": {"balance": amount}},
+        {"$inc": increments},
         upsert=True,
         return_document=ReturnDocument.AFTER,
     )
@@ -4094,7 +4917,7 @@ def balance_candy_view(member, balance, server_name):
     return view
 
 
-def daily_claimed_view(member, reward, boost, new_balance, next_at):
+def daily_claimed_view(member, reward, boost, new_balance, next_at, clan_daily_bonus=False):
     """Components V2 card for a successful /daily."""
     ui = discord.ui
     head = (
@@ -4104,6 +4927,8 @@ def daily_claimed_view(member, reward, boost, new_balance, next_at):
     )
     if boost:
         head += f"\n⚡ **{float(boost['multiplier']):g}× boost** from **{boost['role_name']}**"
+    if clan_daily_bonus:
+        head += f"\n🏰 **{CLAN_DAILY_MULTIPLIER:g}× clan daily bonus**"
     ts = int(next_at.timestamp())
     items = [
         ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
@@ -4331,7 +5156,7 @@ class HalloweenBot(commands.Cog):
             return
 
         await db(ensure_user, guild_id, user_id)
-        updated = await db(add_candy, guild_id, user_id, bonus)
+        updated = await db(add_candy, guild_id, user_id, bonus, True)
         await db(
             log_activity,
             "arcane_level_bonus",
@@ -4465,18 +5290,24 @@ class HalloweenBot(commands.Cog):
         now = now_utc()
         await db(ensure_user, guild_id, user_id, interaction.user.name, interaction.user.display_name)
         config = get_economy_config()
+        perks = await db(member_clan_perks, guild_id, user_id)
+        daily_bonus = bool(perks and perks["daily_unlocked"])
         reward, boost = await db(
             calculate_daily_reward,
             config["daily_reward"],
             [role.id for role in getattr(interaction.user, "roles", [])],
             guild_id,
+            daily_bonus,
         )
         cutoff = now - timedelta(hours=24)
         updated = await db(
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
              "$or": [{"last_daily": {"$exists": False}}, {"last_daily": {"$lte": cutoff}}]},
-            {"$set": {"last_daily": now}, "$inc": {"balance": reward}},
+            {"$set": {"last_daily": now}, "$inc": {
+                "balance": reward,
+                "candy_earned_total": reward,
+            }},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
@@ -4488,9 +5319,14 @@ class HalloweenBot(commands.Cog):
                 view=daily_cooldown_view(interaction.user, next_at, reward, boost), ephemeral=True)
             return
         await db(log_activity, "daily", interaction.user.id, interaction.user.name, guild_id, reward,
-                 {"boost_role": boost.get("role_name") if boost else None, "multiplier": boost.get("multiplier") if boost else 1})
+                 {"boost_role": boost.get("role_name") if boost else None,
+                  "multiplier": boost.get("multiplier") if boost else 1,
+                  "clan_multiplier": CLAN_DAILY_MULTIPLIER if daily_bonus else 1})
         await interaction.response.send_message(
-            view=daily_claimed_view(interaction.user, reward, boost, updated["balance"], now + timedelta(hours=24)),
+            view=daily_claimed_view(
+                interaction.user, reward, boost, updated["balance"],
+                now + timedelta(hours=24), daily_bonus,
+            ),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="trickortreat", description="Go trick-or-treating for a random Candy reward.")
@@ -4517,7 +5353,10 @@ class HalloweenBot(commands.Cog):
             users.find_one_and_update,
             {"guild_id": guild_id, "user_id": user_id,
              "$or": [{"last_trick_or_treat": {"$exists": False}}, {"last_trick_or_treat": {"$lte": now - timedelta(seconds=cooldown)}}]},
-            {"$set": {"last_trick_or_treat": now}, "$inc": {"balance": reward}},
+            {"$set": {"last_trick_or_treat": now}, "$inc": {
+                "balance": reward,
+                "candy_earned_total": reward,
+            }},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
@@ -4701,9 +5540,13 @@ class HalloweenBot(commands.Cog):
         member = await db(get_fresh_member, interaction.guild.id, interaction.user.id)
         if member is None:
             member = interaction.user
+        clan_perks = await db(member_clan_perks, interaction.guild.id, interaction.user.id)
         view = OwnedShopView(interaction.user.id)
         summary = ["# 🛒 Halloween Candy Shop", f"<@{interaction.user.id}>, spend your 🍬 Candy below. Only you can use these buttons."]
         for item_data in items:
+            display_price, discounted = effective_shop_price(
+                interaction.guild.id, interaction.user.id, item_data, clan_perks,
+            )
             if not item_data.get("enabled", True):
                 summary.append(
                     f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — "
@@ -4713,7 +5556,10 @@ class HalloweenBot(commands.Cog):
             eligible = member_meets_shop_requirements(member, item_data)
             requirement = shop_requirement_text(interaction.guild, item_data)
             status = "✅ Eligible" if eligible else "🔒 Locked"
-            summary.append(f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — {int(item_data.get('price',0)):,} 🍬\n{item_data.get('description','')}\n{status} • {requirement}")
+            price_text = f"{display_price:,} 🍬"
+            if discounted:
+                price_text += f" (clan price; was {int(item_data.get('price',0)):,})"
+            summary.append(f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — {price_text}\n{item_data.get('description','')}\n{status} • {requirement}")
         if not items: summary.append("\nNo shop items are currently configured.")
         view.add_item(discord.ui.Container(discord.ui.TextDisplay("\n".join(summary)[:3900])))
         buttons = []
@@ -4742,8 +5588,13 @@ class HalloweenBot(commands.Cog):
                                       description=SHOP_RESULT_MESSAGES.get(result, "Purchase failed."),
                                       color=discord.Color.green() if result == "success" else discord.Color.red())
                 if item_now:
+                    paid_price, discounted = effective_shop_price(
+                        btn_interaction.guild.id,
+                        btn_interaction.user.id,
+                        item_now,
+                    )
                     embed.add_field(name="Item", value=f"{item_now.get('emoji','🎃')} {item_now.get('name','Shop Item')}", inline=False)
-                    embed.add_field(name="Price", value=f"{int(item_now.get('price',0)):,} 🍬", inline=True)
+                    embed.add_field(name="Price", value=f"{paid_price:,} 🍬" + (" (10% clan discount)" if discounted else ""), inline=True)
                 await btn_interaction.followup.send(embed=embed, ephemeral=True)
             button.callback = callback
             buttons.append(button)

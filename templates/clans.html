@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aureolis • Clans</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
+  <style>
+    .section-main{padding:36px;max-width:1100px}
+    .hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:20px}
+    .hero{padding:32px;background:linear-gradient(135deg,rgba(124,58,237,.25),rgba(249,115,22,.12));border-color:rgba(167,139,250,.2)}
+    .eyebrow{font-size:12px;letter-spacing:.18em;color:#a78bfa;font-weight:800}
+    .hero h1{font-size:44px;margin:10px 0}
+    .hero p,.muted{color:#c9c3d8}
+    .card{padding:20px;margin-top:20px}
+    .server-picker,.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+    .field-label{display:block;color:#c9c3d8;font-size:13px}
+    .field{width:100%;box-sizing:border-box;margin-top:7px;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white;font:inherit}
+    textarea.field{min-height:90px;resize:vertical}
+    .button{margin-top:14px;padding:10px 15px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:800;cursor:pointer;text-decoration:none;display:inline-block}
+    .button.alt{background:#171722;border:1px solid rgba(255,255,255,.1)}
+    .button.danger{background:#3b2020;color:#fca5a5}
+    .notice{padding:12px 14px;border-radius:10px;background:#163523;color:#86efac;margin:16px 0}
+    .notice.error{background:#3b2020;color:#fca5a5}
+    .clan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+    .clan-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18}
+    .clan-head{display:flex;align-items:center;gap:13px}
+    .clan-icon{width:58px;height:58px;object-fit:cover;border-radius:16px;background:#21162d}
+    .clan-placeholder{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:#21162d;font-size:27px}
+    .clan-head h3{margin:0}
+    .clan-desc{color:#aaa2b9;margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+    .clan-meta{color:#aaa2b9;font-size:13px}
+    .progress-group{margin-top:12px}
+    .progress-label{display:flex;justify-content:space-between;gap:10px;color:#c9c3d8;font-size:12px;margin:8px 0 5px}
+    progress{width:100%;height:10px;accent-color:#8b5cf6}
+    .clan-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .request-row{padding:13px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+    .request-row:last-child{border-bottom:0}
+    .small-form{display:inline-flex;gap:7px;align-items:center;flex-wrap:wrap;margin:6px 8px 0 0}
+    .small-form input[type=text]{padding:9px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:#110d19;color:white}
+    @media(max-width:700px){.section-main{padding:22px}.hero h1{font-size:36px}}
+  </style>
+</head>
+<body>
+{% include "_sidebar.html" %}
+<main class="section-main page-center">
+  <section class="hero">
+    <div class="eyebrow">🎃 AUREOLIS • COMMUNITY</div>
+    <h1>🏰 Clans</h1>
+    <p>Create a clan, invite fellow members, or request to join one. Clans earn shared progress toward a shop discount and an enhanced daily reward.</p>
+  </section>
+
+  {% if saved == 'request_submitted' %}<div class="notice">✓ Clan creation request sent to the Aureolis admins for approval.</div>
+  {% elif saved == 'creation_approved' %}<div class="notice">✓ Clan approved and created.</div>
+  {% elif saved == 'creation_denied' %}<div class="notice">Clan creation request declined.</div>
+  {% elif saved == 'join_requested' %}<div class="notice">✓ Join request sent to the clan creator.</div>
+  {% elif saved == 'join_approved' %}<div class="notice">✓ Member approved into the clan.</div>
+  {% elif saved == 'join_denied' %}<div class="notice">Join request declined.</div>
+  {% elif saved == 'invite_sent' %}<div class="notice">✓ Invitation sent. They must accept it to join.</div>
+  {% elif saved == 'invite_accepted' %}<div class="notice">✓ Clan invitation accepted.</div>
+  {% elif saved == 'invite_declined' %}<div class="notice">Invitation declined.</div>
+  {% elif saved == 'left_clan' %}<div class="notice">You left the clan.</div>
+  {% elif saved == 'clan_updated' %}<div class="notice">✓ Clan details saved.</div>{% endif %}
+  {% if error %}<div class="notice error">
+    {% if error == 'name_taken' %}That clan name is already in use on this server.
+    {% elif error == 'name_pending' %}A request with that clan name is already awaiting approval.
+    {% elif error == 'request_pending' %}You already have a clan creation request awaiting approval.
+    {% elif error == 'already_in_clan' %}You are already in a clan on this server.
+    {% elif error == 'icon_size' %}Clan icons must be no larger than 2 MB.
+    {% elif error == 'icon_type' %}Use a PNG, JPEG, or WebP image for the clan icon.
+    {% elif error == 'creation_failed' %}The clan could not be approved; confirm the creator is still in the server and retry.
+    {% elif error == 'creator_in_clan' %}The creator joined another clan before approval; the request is still pending.
+    {% elif error == 'invite_invalid' %}That member could not be invited. Verify their ID and server membership.
+    {% elif error == 'invite_unavailable' %}That invitation is no longer available.
+    {% elif error == 'join_unavailable' %}That clan or join request is no longer available.
+    {% elif error == 'request_unavailable' %}That request is no longer available.
+    {% elif error == 'clan_settings' %}Clan details could not be saved. Check the name and description.
+    {% elif error == 'clan_unavailable' %}Your clan membership could not be found.
+    {% else %}Please check the clan details and try again.{% endif %}
+  </div>{% endif %}
+
+  {% if guilds %}
+  <section class="card">
+    <form method="get" action="{{ url_for('clans_page') }}" class="server-picker">
+      <label class="field-label">Server
+        <select class="field" name="guild" onchange="this.form.submit()">
+          {% for server in guilds %}<option value="{{ server.id }}" {% if guild and server.id|string == guild.id|string %}selected{% endif %}>{{ server.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+    {% if guild %}<p class="muted">Clans are separate for each server. Your current wallet here is <strong>{{ "{:,}".format(member_balance) }} 🍬</strong>.</p>{% endif %}
+  </section>
+  {% else %}
+  <section class="card"><h2>No shared server found</h2><p class="muted">Sign in with Discord and select a server where you and the Aureolis bot are both members.</p></section>
+  {% endif %}
+
+  {% if guild and my_clan %}
+  <section class="card">
+    <div class="clan-head">
+      {% if my_clan.icon_url %}<img class="clan-icon" src="{{ my_clan.icon_url }}" alt="{{ my_clan.name }} icon">
+      {% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
+      <div><h2>{{ my_clan.name }}</h2><div class="clan-meta">{{ my_clan.member_count }} member{{ '' if my_clan.member_count == 1 else 's' }} · Shared progress: {{ "{:,}".format(my_clan.earned) }} Candy</div></div>
+    </div>
+    {% if my_clan.description %}<p class="clan-desc">{{ my_clan.description }}</p>{% endif %}
+    <div class="progress-group">
+      <div class="progress-label"><span>10% shop discount</span><strong>{{ "{:,}".format(my_clan.earned) }} / {{ "{:,}".format(my_clan.discount_threshold) }} 🍬</strong></div>
+      <progress value="{{ my_clan.earned if my_clan.discount_threshold else 1 }}" max="{{ my_clan.discount_threshold or 1 }}"></progress>
+      <div class="progress-label"><span>{{ 'Unlocked' if my_clan.discount_unlocked else 'Earn more Candy to unlock' }}</span><span>{% if my_clan.discount_unlocked %}✓{% else %}{{ "{:,}".format([my_clan.discount_threshold - my_clan.earned, 0]|max) }} to go{% endif %}</span></div>
+      <div class="progress-label"><span>1.25× daily reward multiplier</span><strong>{{ "{:,}".format(my_clan.earned) }} / {{ "{:,}".format(my_clan.daily_threshold) }} 🍬</strong></div>
+      <progress value="{{ my_clan.earned if my_clan.daily_threshold else 1 }}" max="{{ my_clan.daily_threshold or 1 }}"></progress>
+      <div class="progress-label"><span>{{ 'Unlocked' if my_clan.daily_unlocked else 'Earn more Candy to unlock' }}</span><span>{% if my_clan.daily_unlocked %}✓{% else %}{{ "{:,}".format([my_clan.daily_threshold - my_clan.earned, 0]|max) }} to go{% endif %}</span></div>
+    </div>
+    <p class="muted">Only eligible Candy earned after each member joined counts. Candy held before joining does not add clan progress.</p>
+    <div class="clan-actions">
+      <form method="post" action="{{ url_for('clans_leave') }}" onsubmit="return confirm('Leave this clan? Your earned contribution will no longer count toward its progress.')">
+        <input type="hidden" name="guild_id" value="{{ guild.id }}"><button class="button danger" type="submit">Leave clan</button>
+      </form>
+    </div>
+    {% if my_clan_owner %}
+    <form method="post" action="{{ url_for('clans_settings') }}" enctype="multipart/form-data" class="card">
+      <input type="hidden" name="guild_id" value="{{ guild.id }}">
+      <h3>Manage clan</h3>
+      <label class="field-label">Clan name<input class="field" name="name" maxlength="32" minlength="3" value="{{ my_clan.name }}" required></label>
+      <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500">{{ my_clan.description }}</textarea></label>
+      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
+      <button class="button" type="submit">Save clan</button>
+    </form>
+    <form method="post" action="{{ url_for('clans_invite') }}" class="small-form">
+      <input type="hidden" name="guild_id" value="{{ guild.id }}"><input name="member_id" type="text" inputmode="numeric" pattern="[0-9]{17,20}" placeholder="Discord member ID" required>
+      <button class="button" type="submit">Invite member</button>
+    </form>
+    {% endif %}
+  </section>
+  {% elif guild %}
+  <section class="card">
+    <h2>Start a clan</h2>
+    <p class="muted">Clan creation requires Aureolis admin approval. The creator becomes the clan owner.</p>
+    <form method="post" action="{{ url_for('clans_create') }}" enctype="multipart/form-data">
+      <input type="hidden" name="guild_id" value="{{ guild.id }}">
+      <label class="field-label">Clan name<input class="field" name="name" minlength="3" maxlength="32" required></label>
+      <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500"></textarea></label>
+      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
+      <button class="button" type="submit">Request clan creation</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if my_invites %}
+  <section class="card"><h2>Clan invitations</h2>
+    {% for invite in my_invites %}
+    {% if invite.clan %}
+    <div class="request-row"><strong>{{ invite.clan.name }}</strong><div class="muted">You were invited to join this clan.</div>
+      <form method="post" action="{{ url_for('clans_invite_decision', invite_id=invite.invite_id) }}" class="small-form"><input type="hidden" name="action" value="accept"><button class="button" type="submit">Accept invitation</button></form>
+      <form method="post" action="{{ url_for('clans_invite_decision', invite_id=invite.invite_id) }}" class="small-form"><input type="hidden" name="action" value="decline"><button class="button alt" type="submit">Decline</button></form>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if my_clan_owner and my_requests %}
+  <section class="card"><h2>Join requests</h2>
+    {% for item in my_requests %}
+    <div class="request-row"><strong>{{ item.username }}</strong> <span class="muted">· {{ item.user_id }}</span>
+      <form method="post" action="{{ url_for('clans_join_decision', request_id=item.request_id) }}" class="small-form"><input type="hidden" name="action" value="approve"><button class="button" type="submit">Approve</button></form>
+      <form method="post" action="{{ url_for('clans_join_decision', request_id=item.request_id) }}" class="small-form"><input type="hidden" name="action" value="deny"><button class="button alt" type="submit">Decline</button></form>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if creation_requests %}
+  <section class="card"><h2>Pending clan creation approvals</h2>
+    {% for item in creation_requests %}
+    <div class="request-row" id="review-{{ item.request_id }}"><strong>{{ item.name }}</strong> <span class="muted">· Requested by {{ item.creator_name }} ({{ item.creator_id }})</span>
+      {% if item.description %}<p class="muted">{{ item.description }}</p>{% endif %}
+      <form method="post" action="{{ url_for('clans_creation_decision', request_id=item.request_id) }}" class="small-form"><input type="hidden" name="action" value="approve"><button class="button" type="submit">Approve &amp; create</button></form>
+      <form method="post" action="{{ url_for('clans_creation_decision', request_id=item.request_id) }}" class="small-form"><input type="hidden" name="action" value="deny"><button class="button alt" type="submit">Decline</button></form>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if guild %}
+  <section class="card">
+    <h2>Clans in {{ guild.name }}</h2>
+    <div class="clan-list">
+      {% for clan in clans %}
+      <article class="clan-card">
+        <div class="clan-head">
+          {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
+          <div><h3>{{ clan.name }}</h3><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
+        </div>
+        {% if clan.description %}<p class="clan-desc">{{ clan.description }}</p>{% endif %}
+        <div class="progress-label"><span>Shop discount</span><span>{{ "{:,}".format(clan.earned) }} / {{ "{:,}".format(clan.discount_threshold) }}</span></div>
+        <progress value="{{ clan.earned if clan.discount_threshold else 1 }}" max="{{ clan.discount_threshold or 1 }}"></progress>
+        <div class="progress-label"><span>Daily bonus</span><span>{{ "{:,}".format(clan.earned) }} / {{ "{:,}".format(clan.daily_threshold) }}</span></div>
+        <progress value="{{ clan.earned if clan.daily_threshold else 1 }}" max="{{ clan.daily_threshold or 1 }}"></progress>
+        {% if not my_clan and clan.clan_id not in pending_join_clan_ids %}
+        <form method="post" action="{{ url_for('clans_join_request', clan_id=clan.clan_id) }}">
+          <input type="hidden" name="guild_id" value="{{ guild.id }}"><button class="button" type="submit">Request to join</button>
+        </form>
+        {% elif clan.clan_id in pending_join_clan_ids %}<div class="muted" style="margin-top:12px">Join request pending approval.</div>{% endif %}
+      </article>
+      {% else %}<p class="muted">No clans have been approved for this server yet.</p>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+</main>
+<script>
+const reviewId = {{ review_id|tojson }};
+if (reviewId) document.getElementById(`review-${reviewId}`)?.scrollIntoView({ block: "center" });
+
+document.querySelectorAll('input[type="file"][name="clan_icon"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (input.files[0] && input.files[0].size > 2 * 1024 * 1024) {
+      input.setCustomValidity("Clan icons must be no larger than 2 MB.");
+    } else {
+      input.setCustomValidity("");
+    }
+  });
+});
+</script>
+</body>
+</html>
