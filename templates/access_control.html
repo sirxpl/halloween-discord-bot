@@ -228,6 +228,23 @@
 
     <div class="access-card">
       <div class="access-header">
+        <div><h2>🎁 Candy gift tax</h2><p class="muted">A percentage fee is charged to the giver on top of the gift. The recipient always receives the full amount. Set to 0% to disable.</p></div>
+      </div>
+      {% if request.args.get('give_tax_saved') %}<div class="gl-flash ok">✓ Candy gift tax saved.</div>{% endif %}
+      {% if request.args.get('give_tax_error') %}<div class="gl-flash err">Tax must be a whole-number percentage from 0 to 100.</div>{% endif %}
+      {% if boost_guild_id %}
+      <form method="post" action="{{ url_for('access_control_give_tax') }}" class="boost-form" style="grid-template-columns:1fr auto">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <label class="muted">Tax percentage
+          <input class="command-search" type="number" name="percent" min="0" max="100" step="1" value="{{ give_tax_percent }}" required>
+        </label>
+        <button type="submit" class="command-toggle enabled">Save give tax</button>
+      </form>
+      {% else %}<p class="muted">The bot is not connected to any servers right now.</p>{% endif %}
+    </div>
+
+    <div class="access-card">
+      <div class="access-header">
         <div><h2>🏰 Clan perks</h2><p class="muted">Set the shared Candy earned by clan members since they each joined that unlocks the 10% eligible-shop discount and the extra daily reward multiplier.</p></div>
       </div>
       {% if request.args.get('clan_saved') %}<div class="gl-flash ok">✓ Clan perk thresholds saved.</div>{% endif %}
