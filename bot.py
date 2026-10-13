@@ -99,7 +99,7 @@ HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
-app.config["MAX_CONTENT_LENGTH"] = CLAN_BANNER_MAX_BYTES + 2 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = CLAN_BANNER_MAX_BYTES + CLAN_ICON_MAX_BYTES + 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
