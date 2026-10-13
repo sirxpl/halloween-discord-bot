@@ -126,6 +126,19 @@
       <div class="access-header"><div><h2>Admin access</h2><p class="muted">Authorized User ID: 777341204047331348</p></div><span class="access-badge">✓ Authorized</span></div>
     </div>
     <div class="access-card">
+      <div class="access-header"><div><h2>🎃 Survey portal banner</h2><p class="muted">Upload or replace the banner shown on the separate survey portal. The portal is not added to dashboard navigation.</p></div><span class="access-badge">{{ 'Banner configured' if survey_banner_configured else 'No banner yet' }}</span></div>
+      {% if request.args.get('saved') in ['survey_banner', 'survey_banner_removed'] %}<div class="gl-flash ok">✓ Survey banner settings saved.</div>{% endif %}
+      {% if request.args.get('error') in ['banner_csrf', 'banner_missing', 'banner_size', 'banner_type'] %}<div class="gl-flash err">{{ {'banner_csrf':'Your form expired. Reload Access Control and try again.','banner_missing':'Choose a banner image first.','banner_size':'Banner images must be no larger than 4 MB.','banner_type':'Use a PNG, JPEG, or WebP image.'}[request.args.get('error')] }}</div>{% endif %}
+      {% if survey_banner_configured %}<img src="{{ url_for('survey_banner_asset') }}" alt="Current survey banner" style="display:block;width:100%;max-height:180px;object-fit:cover;border-radius:12px;margin:16px 0">{% endif %}
+      <form method="post" action="{{ url_for('access_control_survey_banner_save') }}" enctype="multipart/form-data" style="margin-top:16px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="muted" for="survey-banner-file">Banner image (PNG, JPEG, or WebP; up to 4 MB)</label>
+        <input id="survey-banner-file" class="command-search" style="margin-top:8px" type="file" name="survey_banner" accept="image/png,image/jpeg,image/webp" required>
+        <button class="command-toggle enabled" type="submit" style="margin-top:12px">Upload / replace banner</button>
+      </form>
+      {% if survey_banner_configured %}<form method="post" action="{{ url_for('access_control_survey_banner_remove') }}" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="command-toggle disabled" type="submit">Remove banner</button></form>{% endif %}
+    </div>
+    <div class="access-card">
       <div class="access-header">
         <div><h2>🏷️ Badges &amp; nickname gradients</h2><p class="muted">Assign a badge to a Discord role or one user ID. A user-specific gradient takes priority over role gradients; among roles, the highest role wins. Badges remain visible when their gradient is disabled.</p></div>
         <span class="access-badge">{{ badge_configs|length }} configured</span>
