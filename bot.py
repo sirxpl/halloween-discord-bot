@@ -54,6 +54,7 @@ logging_config = db["logging_config"]
 member_controls = db["member_controls"]
 daily_boosts = db["daily_boosts"]
 give_limits = db["give_limits"]
+give_tax_settings = db["give_tax_settings"]
 trick_cooldowns = db["trick_cooldowns"]
 shop_items = db["shop_items"]
 trivia_questions = db["trivia_questions"]
@@ -1549,6 +1550,80 @@ class OwnedShopView(discord.ui.LayoutView):
                 pass
 
 
+class OwnedPurchaseConfirmationView(discord.ui.View):
+    def __init__(self, owner_id, guild_id, item_id):
+        super().__init__(timeout=180)
+        self.owner_id = int(owner_id)
+        self.guild_id = int(guild_id)
+        self.item_id = str(item_id)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "🚫 These purchase buttons belong to someone else. Use **/shop** to browse and purchase for yourself.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Confirm purchase", style=discord.ButtonStyle.success)
+    async def confirm_purchase(self, interaction, button):
+        if interaction.guild_id != self.guild_id:
+            await interaction.response.send_message(
+                "This purchase can only be completed in its original server.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer()
+        controls = await db(get_member_controls, self.guild_id, self.owner_id)
+        result = (
+            "blocked"
+            if controls["blocked_from_candy"]
+            else await db(purchase_shop_item, self.guild_id, self.owner_id, self.item_id)
+        )
+        item_now = await db(
+            lambda: shop_items.find_one({
+                "guild_id": self.guild_id,
+                "item_id": self.item_id,
+            })
+        )
+        messages = {
+            **SHOP_RESULT_MESSAGES,
+            "blocked": "You are not allowed to participate in Candy activities in this server.",
+        }
+        embed = discord.Embed(
+            title="🛒 Purchase Complete" if result == "success" else "🎃 Shop",
+            description=messages.get(result, "The purchase could not be completed."),
+            color=discord.Color.green() if result == "success" else discord.Color.red(),
+        )
+        if item_now:
+            paid_price, discounted = effective_shop_price(
+                self.guild_id,
+                self.owner_id,
+                item_now,
+            )
+            embed.add_field(
+                name="Item",
+                value=f"{item_now.get('emoji', '🎃')} {item_now.get('name', 'Shop Item')}",
+                inline=False,
+            )
+            embed.add_field(
+                name="Price",
+                value=f"{paid_price:,} 🍬" + (" (10% clan discount)" if discounted else ""),
+                inline=True,
+            )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_purchase(self, interaction, button):
+        await interaction.response.edit_message(
+            content="Purchase cancelled.",
+            embed=None,
+            view=None,
+        )
+
+
 SHOP_RESULT_MESSAGES = {
     "success": "Purchase complete.",
     "unavailable": "That shop item is no longer available.",
@@ -2609,6 +2684,33 @@ def get_give_limits(guild_id):
 
 def check_give_limits(guild_id, user_id, role_ids, amount):
     return check_limits("give", guild_id, user_id, role_ids, amount)
+
+
+def get_give_tax_percent(guild_id):
+    record = give_tax_settings.find_one({"guild_id": int(guild_id)}) or {}
+    return max(0, min(100, int(record.get("percent", 0) or 0)))
+
+
+def set_give_tax_percent(guild_id, percent, updated_by=None):
+    percent = int(percent)
+    if not 0 <= percent <= 100:
+        raise ValueError("Give tax percentage must be between 0 and 100.")
+    give_tax_settings.update_one(
+        {"guild_id": int(guild_id)},
+        {"$set": {
+            "guild_id": int(guild_id),
+            "percent": percent,
+            "updated_at": now_utc(),
+            "updated_by": int(updated_by) if updated_by else None,
+        }},
+        upsert=True,
+    )
+    return percent
+
+
+def calculate_give_tax(amount, percent):
+    amount, percent = int(amount), int(percent)
+    return (amount * percent + 99) // 100
 
 
 # =====================================================================
@@ -4053,6 +4155,10 @@ def access_control_page():
             key=lambda item: item["name"].lower(),
         )
     saved_daily_boosts = get_daily_boosts(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
+    give_tax_percent = (
+        get_give_tax_percent(int(selected_boost_guild_id))
+        if selected_boost_guild_id.isdigit() else 0
+    )
     limit_cards = {}
     for limit_kind in LIMIT_KINDS:
         config = get_limit_config(limit_kind, int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {"enabled": False, "rules": []}
@@ -4101,6 +4207,7 @@ def access_control_page():
             (key, BADGE_TYPES[key][0]) for key in CLAN_VERIFICATION_TYPES
         ],
         clan_settings=clan_settings,
+        give_tax_percent=give_tax_percent,
         daily_boosts=saved_daily_boosts,
         limit_cards=limit_cards,
         give_limit_periods=[(key, label) for key, (label, _) in GIVE_LIMIT_PERIODS.items()],
@@ -4396,6 +4503,41 @@ def access_control_clan_verification_remove():
         "access_control_page",
         boost_guild=guild_id,
         clan_verification_saved="1",
+    ))
+
+
+@app.post("/access-control/give-tax")
+def access_control_give_tax():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        bot = BOT.get("instance")
+        if not bot or bot.is_closed() or bot.get_guild(guild_id) is None:
+            raise ValueError
+        percent = int(request.form.get("percent", ""))
+        set_give_tax_percent(guild_id, percent, user["id"])
+        log_activity(
+            "give_tax_updated",
+            user_id=user["id"],
+            username=user.get("username"),
+            guild_id=guild_id,
+            details={"percent": percent},
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for(
+            "access_control_page",
+            boost_guild=guild_id_raw,
+            give_tax_error="invalid",
+        ))
+    return redirect(url_for(
+        "access_control_page",
+        boost_guild=guild_id,
+        give_tax_saved="1",
     ))
 
 
@@ -5130,7 +5272,7 @@ RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 GIVE_PERIOD_WORDS = {"hour": "hour", "day": "day", "week": "week"}
 
 
-def give_candy_view(giver, member, amount, limit_status=None):
+def give_candy_view(giver, member, amount, limit_status=None, tax=0, tax_percent=0):
     """Components V2 card for /give."""
     ui = discord.ui
     head = (
@@ -5139,6 +5281,11 @@ def give_candy_view(giver, member, amount, limit_status=None):
         f"**To:** {member.mention}\n"
         f"**Amount:** {int(amount):,} 🍬"
     )
+    if tax:
+        head += (
+            f"\n**Tax ({int(tax_percent)}%):** {int(tax):,} 🍬"
+            f"\n**Total charged:** {int(amount) + int(tax):,} 🍬"
+        )
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
     if limit_status:
         word = GIVE_PERIOD_WORDS[limit_status["period"]]
@@ -5202,16 +5349,16 @@ def trick_or_treat_view(member, reward, new_balance, next_at, jackpot_rewards=No
 def balance_candy_view(member, balance, server_name, clan_profile=None):
     """Components V2 card for /balance. Same layout as the /add card."""
     ui = discord.ui
-    clan_name = (
-        f"{discord.utils.escape_markdown(clan_profile['name'])}"
-        f" {clan_profile.get('verification_emoji', '')}".rstrip()
-        if clan_profile else "Not in a clan"
+    clan_text = (
+        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}** "
+        f"{clan_profile.get('verification_emoji', '')}".rstrip()
+        if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
         "## 🍬 Candy Balance\n"
         f"**Member:** {member.mention}\n"
+        f"{clan_text}\n"
         f"**Balance:** {int(balance):,} 🍬\n"
-        f"**🏰 Clan:** {clan_name}\n"
         f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [
@@ -5281,10 +5428,10 @@ def profile_candy_view(
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
-    clan_name = (
-        f"{discord.utils.escape_markdown(clan_profile['name'])}"
-        f" {clan_profile.get('verification_emoji', '')}".rstrip()
-        if clan_profile else "Not in a clan"
+    clan_text = (
+        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}** "
+        f"{clan_profile.get('verification_emoji', '')}".rstrip()
+        if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
         f"## 🎃 {member.display_name}'s Profile\n"
@@ -5292,7 +5439,7 @@ def profile_candy_view(
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
         + f"**🎒 Items:** {len(inventory):,}\n"
-        + f"**🏰 Clan:** {clan_name}\n"
+        + f"{clan_text}\n"
         + f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
@@ -5341,7 +5488,7 @@ def leaderboard_candy_view(guild, rows, viewer, viewer_rank=None, viewer_balance
     return view
 
 
-def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
+def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard=False):
     ui = discord.ui
     clan_name = discord.utils.escape_markdown(str(clan.get("name", "Clan")))
     verification = clan_verification_presentation(clan.get("verification_badge"))
@@ -5393,6 +5540,13 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
     button = ui.Button(label=button_label, style=button_style)
 
     async def toggle_leaderboard(button_interaction):
+        if button_interaction.user.id != int(owner_id):
+            await button_interaction.response.send_message(
+                "🚫 This clan card belongs to someone else. Use **/clan** to view a clan and use your own buttons.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
         if button_interaction.guild_id != int(guild.id):
             await button_interaction.response.send_message(
                 "This clan card can only be used in its original server.",
@@ -5426,6 +5580,7 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
                 current_clan,
                 current_progress,
                 current_members,
+                owner_id,
                 not show_leaderboard,
             ),
         )
@@ -5923,23 +6078,47 @@ class HalloweenBot(commands.Cog):
         if blocked:
             await interaction.response.send_message(view=give_limit_blocked_view(blocked, amount), ephemeral=True)
             return
+        tax_percent = await db(get_give_tax_percent, interaction.guild.id)
+        tax = calculate_give_tax(amount, tax_percent)
+        total_cost = int(amount) + tax
         sender = await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
         debited = await db(
             users.find_one_and_update,
-            {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "balance": {"$gte": amount}},
-            {"$inc": {"balance": -amount}},
+            {"guild_id": interaction.guild.id, "user_id": interaction.user.id, "balance": {"$gte": total_cost}},
+            {"$inc": {"balance": -total_cost}},
             return_document=ReturnDocument.AFTER,
         )
         if not debited:
             await interaction.response.send_message(
-                view=notice("❌ Not enough Candy", f"You currently have **{sender['balance']:,} 🍬**."), ephemeral=True)
+                view=notice(
+                    "❌ Not enough Candy",
+                    f"You have **{sender['balance']:,} 🍬**, but the gift and tax require **{total_cost:,} 🍬**.",
+                ),
+                ephemeral=True,
+            )
             return
         await db(ensure_user, interaction.guild.id, member.id, member.name, member.display_name)
         await db(add_candy, interaction.guild.id, member.id, amount)
-        await db(log_activity, "give", interaction.user.id, interaction.user.name, interaction.guild.id, amount, {"recipient_id": member.id, "recipient": member.name})
+        await db(
+            log_activity,
+            "give",
+            interaction.user.id,
+            interaction.user.name,
+            interaction.guild.id,
+            amount,
+            {
+                "recipient_id": member.id,
+                "recipient": member.name,
+                "tax_percent": tax_percent,
+                "tax_amount": tax,
+                "total_charged": total_cost,
+            },
+        )
         tightest = min(statuses, key=lambda s: s["remaining"]) if statuses else None
         await interaction.response.send_message(
-            view=give_candy_view(interaction.user, member, amount, tightest),
+            view=give_candy_view(
+                interaction.user, member, amount, tightest, tax, tax_percent,
+            ),
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[member]))
 
     @app_commands.command(name="leaderboard", description="Show the server Candy leaderboard.")
@@ -6030,7 +6209,13 @@ class HalloweenBot(commands.Cog):
         for member in members:
             member["badges"] = badges_by_user.get(int(member["user_id"]), [])
         await interaction.response.send_message(
-            view=clan_command_view(interaction.guild, clan, progress, members),
+            view=clan_command_view(
+                interaction.guild,
+                clan,
+                progress,
+                members,
+                interaction.user.id,
+            ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -6084,23 +6269,41 @@ class HalloweenBot(commands.Cog):
                                        disabled=disabled)
 
             async def callback(btn_interaction, item_id=str(item_data["item_id"])):
-                await btn_interaction.response.defer(ephemeral=True)
-                if (await db(get_member_controls, btn_interaction.guild.id, btn_interaction.user.id))["blocked_from_candy"]:
-                    await btn_interaction.followup.send("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
-                result = await db(purchase_shop_item, btn_interaction.guild.id, btn_interaction.user.id, item_id)
-                item_now = await db(lambda: shop_items.find_one({"guild_id": btn_interaction.guild.id, "item_id": item_id}))
-                embed = discord.Embed(title="🛒 Purchase Complete" if result == "success" else "🎃 Shop",
-                                      description=SHOP_RESULT_MESSAGES.get(result, "Purchase failed."),
-                                      color=discord.Color.green() if result == "success" else discord.Color.red())
+                item_now = await db(
+                    lambda: shop_items.find_one({
+                        "guild_id": btn_interaction.guild.id,
+                        "item_id": item_id,
+                        "enabled": True,
+                    })
+                )
                 if item_now:
                     paid_price, discounted = effective_shop_price(
                         btn_interaction.guild.id,
                         btn_interaction.user.id,
                         item_now,
                     )
-                    embed.add_field(name="Item", value=f"{item_now.get('emoji','🎃')} {item_now.get('name','Shop Item')}", inline=False)
-                    embed.add_field(name="Price", value=f"{paid_price:,} 🍬" + (" (10% clan discount)" if discounted else ""), inline=True)
-                await btn_interaction.followup.send(embed=embed, ephemeral=True)
+                    price_text = f"{paid_price:,} 🍬"
+                    if discounted:
+                        price_text += " (10% clan discount)"
+                    prompt = (
+                        f"Purchase **{item_now.get('name', 'Shop Item')}** "
+                        f"for **{price_text}**?"
+                    )
+                else:
+                    prompt = "This shop item is no longer available. Run **/shop** to refresh the catalog."
+                confirm_view = OwnedPurchaseConfirmationView(
+                    btn_interaction.user.id,
+                    btn_interaction.guild.id,
+                    item_id,
+                )
+                if item_now is None:
+                    for child in confirm_view.children:
+                        child.disabled = True
+                await btn_interaction.response.send_message(
+                    prompt,
+                    view=confirm_view,
+                    ephemeral=True,
+                )
             button.callback = callback
             buttons.append(button)
         for start in range(0, len(buttons), 5):
