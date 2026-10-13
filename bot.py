@@ -509,13 +509,12 @@ def clans_create():
         "created_at": now_utc(),
     })
     review_url = url_for("clans_page", guild=guild_id, review=request_id, _external=True)
-    for admin_id in ADMIN_USER_IDS:
-        send_clan_dm(
-            admin_id,
-            f"New clan creation request for **{name}** in **{guild.name}** from "
-            f"{user.get('global_name') or user.get('username', 'a member')}.\n"
-            f"Review it here: {review_url}",
-        )
+    send_clan_dm(
+        777341204047331348,
+        f"New clan creation request for **{name}** in **{guild.name}** from "
+        f"{user.get('global_name') or user.get('username', 'a member')}.\n"
+        f"Review it here: {review_url}",
+    )
     return redirect(url_for("clans_page", guild=guild_id, saved="request_submitted"))
 
 
