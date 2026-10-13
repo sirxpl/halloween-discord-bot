@@ -5614,8 +5614,8 @@ def clan_member_leaderboard_view(guild, clan, members):
         + f" — **{int(member['contributed']):,} 🍬**"
         for index, member in enumerate(members, start=1)
     ]
-    details = "\\n".join(lines) if lines else "No members have contributed Candy yet."
-    body = f"## 🏆 {clan_name}{verification_badge} Contribution Leaderboard\\n-# {guild.name}\\n\\n{details}"
+    details = "\n".join(lines) if lines else "No members have contributed Candy yet."
+    body = f"## 🏆 {clan_name}{verification_badge} Contribution Leaderboard\n-# {guild.name}\n\n{details}"
     items = [
         ui.Section(ui.TextDisplay(body), accessory=ui.Thumbnail(icon_url))
         if icon_url else ui.TextDisplay(body),
