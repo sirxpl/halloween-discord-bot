@@ -6097,6 +6097,7 @@ class HalloweenBot(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
         guild_id = interaction.guild.id
         reason = clean_reason(reason)
         await db(ensure_user, guild_id, member.id, member.name, member.display_name)
@@ -6137,7 +6138,7 @@ class HalloweenBot(commands.Cog):
             guild_id, previous_balance, details,
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             view=candy_notice_view(
                 "🧹 Candy Reset Complete",
                 f"Reset {member.mention}'s Candy balance to **0** and lifetime Candy earned to **0**. "
