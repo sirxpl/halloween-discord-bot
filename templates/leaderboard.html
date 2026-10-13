@@ -21,6 +21,11 @@
 </head>
 <body>
 {% include "_sidebar.html" %}
+<style>
+  .role-badges{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .role-badge-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(10,8,15,.72);color:#e8e3ef;font-size:11px;font-weight:750;white-space:nowrap}
+  .role-badge-chip img{width:18px;height:18px;object-fit:contain}
+</style>
 <main class="section-main">
   <header class="hero">
     <div class="eyebrow">🎃 AUREOLIS • CANDY ECONOMY</div>
@@ -42,7 +47,7 @@
           {% endif %}
           <div>
             <div class="name-line"><span class="name{% if user.name_gradient %} name-gradient{% endif %}"{% if user.name_gradient %} style="--gradient-start:{{ user.name_gradient.start }};--gradient-end:{{ user.name_gradient.end }}"{% endif %}>{{ user.name }}</span>
-              {% if user.badges %}<span class="role-badges">{% for badge in user.badges %}<img class="role-badge" src="{{ badge.icon_url }}" alt="{{ badge.label }} badge" title="{{ badge.label }}" loading="lazy">{% endfor %}</span>{% endif %}
+              {% if user.badges %}<span class="role-badges">{% for badge in user.badges %}<span class="role-badge-chip" title="{{ badge.label }}"><img src="{{ badge.icon_url }}" alt="">{{ badge.label }}</span>{% endfor %}</span>{% endif %}
             </div>
             <span class="sub">Candy collector</span>
           </div>
