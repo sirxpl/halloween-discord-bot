@@ -76,11 +76,12 @@ TOS_VERSION = "2026-10-04"
 
 ADMIN_USER_IDS = {777341204047331348, 793723672225382452, 931543094086750299, 1012751329845841921}
 BADGE_TYPES = {
-    "administrator": ("Administrator", "badges/administrator.png"),
-    "carry-team": ("Carry Team", "badges/carry-team.png"),
-    "staff": ("Staff", "badges/staff.png"),
-    "verified": ("Verified", "badges/verified.png"),
-    "verified-plus": ("Verified+", "badges/verified-plus.png"),
+    "tax": ("Tax", "tax", "1559355733772861481"),
+    "staff": ("Staff", "stafficon", "1559355732795727903"),
+    "verified": ("Verified", "verified", "1559355731839557683"),
+    "verified-plus": ("Verified+", "verifiedplus", "1559355730866212974"),
+    "carry-team": ("Carry Team", "carryteamicon", "1559355729952112731"),
+    "administrator": ("Administrator", "administratoricon", "1559355728446365726"),
 }
 CLAN_DEFAULT_DISCOUNT_THRESHOLD = 5000
 CLAN_DEFAULT_DAILY_THRESHOLD = 5000
@@ -1948,7 +1949,7 @@ def get_badge_configs(guild_id):
         if (target_type not in {"role", "user"} or not re.fullmatch(r"[0-9]+", target_id)
                 or badge_type not in BADGE_TYPES):
             continue
-        label, _ = BADGE_TYPES[badge_type]
+        label, emoji_name, emoji_id = BADGE_TYPES[badge_type]
         configs.append({
             "target_type": target_type,
             "target_id": target_id,
@@ -1956,7 +1957,8 @@ def get_badge_configs(guild_id):
                                or f"{'Role' if target_type == 'role' else 'User'} {target_id}"),
             "badge_type": badge_type,
             "badge_label": label,
-            "icon_url": url_for("static", filename=BADGE_TYPES[badge_type][1]),
+            "emoji": f"<:{emoji_name}:{emoji_id}>",
+            "icon_url": f"https://cdn.discordapp.com/emojis/{emoji_id}.png?size=64",
             "gradient_start": valid_gradient_color(item.get("gradient_start"), "#8b5cf6"),
             "gradient_end": valid_gradient_color(item.get("gradient_end"), "#f97316"),
             "gradient_enabled": item.get("gradient_enabled", True) is True,
@@ -2008,6 +2010,8 @@ def badge_presentation_for_member(user_id, member, configs, preferred_target=Non
     badges = [{
         "icon_url": config["icon_url"],
         "label": config["badge_label"],
+        "emoji": config["emoji"],
+        "badge_type": config["badge_type"],
     } for config in [selected] if selected]
     gradient = None
     gradient_configs = [config for config in matching if config["gradient_enabled"]]
@@ -2025,6 +2029,38 @@ def get_member_badge_preference(guild_id, user_id):
         {"target": 1},
     )
     return preference.get("target") if preference else None
+
+
+def leaderboard_member_badges(guild_id, rows):
+    configs = get_badge_configs(guild_id)
+    if not configs:
+        return {}
+    member_keys = [
+        (int(guild_id), int(row["user_id"]))
+        for row in rows
+        if row.get("user_id") is not None
+    ]
+    members = get_bot_members_for_display(member_keys)
+    badges_by_user = {}
+    for row in rows:
+        user_id = int(row["user_id"])
+        badges, _, _, _ = badge_presentation_for_member(
+            user_id,
+            members.get((int(guild_id), user_id)),
+            configs,
+            get_member_badge_preference(guild_id, user_id),
+        )
+        badges_by_user[user_id] = badges
+    return badges_by_user
+
+
+def member_badges_for_display(guild_id, user_id, member):
+    return badge_presentation_for_member(
+        user_id,
+        member,
+        get_badge_configs(guild_id),
+        get_member_badge_preference(guild_id, user_id),
+    )[0]
 
 
 def is_command_enabled(command_name):
@@ -5080,17 +5116,21 @@ def daily_cooldown_view(member, next_at, next_reward, boost=None):
     return view
 
 
-def profile_candy_view(member, user, rank, next_daily=None, is_self=True, clan_profile=None):
+def profile_candy_view(
+    member, user, rank, next_daily=None, is_self=True, clan_profile=None, badges=None
+):
     """Components V2 card for /profile."""
     ui = discord.ui
     inventory = user.get("inventory", []) or []
+    badge_text = " ".join(badge["emoji"] for badge in badges or [])
     head = (
         f"## 🎃 {member.display_name}'s Profile\n"
-        f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
-        f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
-        f"**🎒 Items:** {len(inventory):,}\n"
-        f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
-        f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
+        + (f"{badge_text}\n" if badge_text else "")
+        + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
+        + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
+        + f"**🎒 Items:** {len(inventory):,}\n"
+        + f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
+        + f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
     if inventory:
@@ -5119,7 +5159,9 @@ def leaderboard_candy_view(guild, rows, viewer, viewer_rank=None, viewer_balance
     lines = []
     for index, row in enumerate(rows, start=1):
         marker = RANK_MEDALS.get(index, f"**{index}.**")
-        lines.append(f"{marker} <@{row['user_id']}> — **{int(row['balance']):,} 🍬**")
+        badges = " ".join(badge["emoji"] for badge in row.get("badges", []))
+        badge_text = f" {badges}" if badges else ""
+        lines.append(f"{marker} <@{row['user_id']}>{badge_text} — **{int(row['balance']):,} 🍬**")
     head = f"## 🏆 Candy Leaderboard\n-# {guild.name}"
     icon = guild.icon.url if guild.icon else None
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(icon)) if icon else ui.TextDisplay(head)]
@@ -5734,6 +5776,9 @@ class HalloweenBot(commands.Cog):
         if not top_users:
             await interaction.response.send_message(view=candy_notice_view("🍬 Candy Leaderboard", "Nobody has earned Candy yet!", ok=True))
             return
+        badges_by_user = await db(leaderboard_member_badges, guild_id, top_users)
+        for row in top_users:
+            row["badges"] = badges_by_user.get(int(row["user_id"]), [])
         await interaction.response.send_message(
             view=leaderboard_candy_view(interaction.guild, top_users, interaction.user, viewer_rank, viewer_balance),
             allowed_mentions=discord.AllowedMentions.none())
@@ -5882,6 +5927,7 @@ class HalloweenBot(commands.Cog):
         target = member or interaction.user
         user = await db(ensure_user, guild_id, target.id, target.name, target.display_name)
         clan_profile = await db(clan_member_profile, guild_id, user)
+        badges = await db(member_badges_for_display, guild_id, target.id, target)
         rank = await db(users.count_documents, {"guild_id": guild_id, "balance": {"$gt": int(user.get("balance", 0))}}) + 1
         last_daily = user.get("last_daily")
         next_daily = None
@@ -5897,6 +5943,7 @@ class HalloweenBot(commands.Cog):
                 next_daily,
                 is_self=target.id == interaction.user.id,
                 clan_profile=clan_profile,
+                badges=badges,
             ),
             allowed_mentions=discord.AllowedMentions.none())
 
