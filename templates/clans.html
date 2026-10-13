@@ -24,6 +24,7 @@
     .notice.error{background:#3b2020;color:#fca5a5}
     .clan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
     .clan-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18}
+    .clan-banner{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.1)}
     .clan-head{display:flex;align-items:center;gap:13px}
     .clan-icon{width:58px;height:58px;object-fit:cover;border-radius:16px;background:#21162d}
     .clan-placeholder{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:#21162d;font-size:27px}
@@ -121,6 +122,7 @@
 
   {% if guild and my_clan %}
   <section class="card">
+    {% if my_clan.banner_url %}<img class="clan-banner" src="{{ my_clan.banner_url }}" alt="{{ my_clan.name }} banner">{% endif %}
     <div class="clan-head">
       {% if my_clan.icon_url %}<img class="clan-icon" src="{{ my_clan.icon_url }}" alt="{{ my_clan.name }} icon">
       {% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
@@ -168,6 +170,7 @@
       <label class="field-label">Clan name<input class="field" name="name" maxlength="32" minlength="3" value="{{ my_clan.name }}" required></label>
       <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500">{{ my_clan.description }}</textarea></label>
       <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
+      <label class="field-label" style="margin-top:12px">Clan banner (PNG, JPEG, or WebP; up to 4 MB)<input class="field" type="file" name="clan_banner" accept="image/png,image/jpeg,image/webp"></label>
       <button class="button" type="submit">Save clan</button>
     </form>
     <form method="post" action="{{ url_for('clans_invite') }}" class="small-form">
@@ -233,6 +236,7 @@
       {% for clan in clans %}
       <article class="clan-card">
         <div class="clan-head">
+          {% if clan.banner_url %}<img class="clan-banner" src="{{ clan.banner_url }}" alt="{{ clan.name }} banner" loading="lazy">{% endif %}
           {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
           <div><div class="clan-name-line"><h3>{{ clan.name }}</h3>{% if clan.verification_label %}<span class="clan-verification" title="{{ clan.verification_label }}"><img src="{{ clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
         </div>
