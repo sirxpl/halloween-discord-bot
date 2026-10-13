@@ -28,6 +28,9 @@
     .clan-icon{width:58px;height:58px;object-fit:cover;border-radius:16px;background:#21162d}
     .clan-placeholder{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:#21162d;font-size:27px}
     .clan-head h3{margin:0}
+    .clan-name-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .clan-verification{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(10,8,15,.72);color:#e8e3ef;font-size:11px;font-weight:750;white-space:nowrap}
+    .clan-verification img{width:18px;height:18px;object-fit:contain}
     .clan-desc{color:#aaa2b9;margin:12px 0;white-space:pre-wrap;overflow-wrap:anywhere}
     .clan-meta{color:#aaa2b9;font-size:13px}
     .progress-group{margin-top:12px}
@@ -121,7 +124,7 @@
     <div class="clan-head">
       {% if my_clan.icon_url %}<img class="clan-icon" src="{{ my_clan.icon_url }}" alt="{{ my_clan.name }} icon">
       {% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
-      <div><h2>{{ my_clan.name }}</h2><div class="clan-meta">{{ my_clan.member_count }} member{{ '' if my_clan.member_count == 1 else 's' }} · Shared progress: {{ "{:,}".format(my_clan.earned) }} Candy</div></div>
+      <div><div class="clan-name-line"><h2>{{ my_clan.name }}</h2>{% if my_clan.verification_label %}<span class="clan-verification" title="{{ my_clan.verification_label }}"><img src="{{ my_clan.verification_icon_url }}" alt="">{{ my_clan.verification_label }}</span>{% endif %}</div><div class="clan-meta">{{ my_clan.member_count }} member{{ '' if my_clan.member_count == 1 else 's' }} · Shared progress: {{ "{:,}".format(my_clan.earned) }} Candy</div></div>
     </div>
     {% if my_clan.description %}<p class="clan-desc">{{ my_clan.description }}</p>{% endif %}
     <div class="progress-group">
@@ -231,7 +234,7 @@
       <article class="clan-card">
         <div class="clan-head">
           {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
-          <div><h3>{{ clan.name }}</h3><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
+          <div><div class="clan-name-line"><h3>{{ clan.name }}</h3>{% if clan.verification_label %}<span class="clan-verification" title="{{ clan.verification_label }}"><img src="{{ clan.verification_icon_url }}" alt="">{{ clan.verification_label }}</span>{% endif %}</div><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
         </div>
         {% if clan.description %}<p class="clan-desc">{{ clan.description }}</p>{% endif %}
         <div class="progress-label"><span>Shop discount</span><span>{{ "{:,}".format(clan.earned) }} / {{ "{:,}".format(clan.discount_threshold) }}</span></div>
