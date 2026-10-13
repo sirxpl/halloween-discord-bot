@@ -2164,6 +2164,25 @@ def clan_progress(guild_id, clan):
     }
 
 
+def clan_member_profile(guild_id, member_record):
+    clan_id = member_record.get("clan_id")
+    if not clan_id:
+        return None
+    clan = clans.find_one({
+        "guild_id": int(guild_id),
+        "clan_id": str(clan_id),
+        "status": "active",
+    })
+    if clan is None:
+        return None
+    earned_total = int(member_record.get("candy_earned_total", 0) or 0)
+    earned_at_join = int(member_record.get("clan_candy_earned_at_join", earned_total) or 0)
+    return {
+        "name": clan.get("name", "Unknown Clan"),
+        "contributed": max(0, earned_total - earned_at_join),
+    }
+
+
 def member_clan_perks(guild_id, user_id):
     member_record = users.find_one({"guild_id": int(guild_id), "user_id": int(user_id)}) or {}
     clan_id = member_record.get("clan_id")
@@ -4993,13 +5012,15 @@ def trick_or_treat_view(member, reward, new_balance, next_at, jackpot_rewards=No
     return view
 
 
-def balance_candy_view(member, balance, server_name):
+def balance_candy_view(member, balance, server_name, clan_profile=None):
     """Components V2 card for /balance. Same layout as the /add card."""
     ui = discord.ui
     head = (
         "## 🍬 Candy Balance\n"
         f"**Member:** {member.mention}\n"
-        f"**Balance:** {int(balance):,} 🍬"
+        f"**Balance:** {int(balance):,} 🍬\n"
+        f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
+        f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [
         ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
@@ -5059,7 +5080,7 @@ def daily_cooldown_view(member, next_at, next_reward, boost=None):
     return view
 
 
-def profile_candy_view(member, user, rank, next_daily=None, is_self=True):
+def profile_candy_view(member, user, rank, next_daily=None, is_self=True, clan_profile=None):
     """Components V2 card for /profile."""
     ui = discord.ui
     inventory = user.get("inventory", []) or []
@@ -5067,7 +5088,9 @@ def profile_candy_view(member, user, rank, next_daily=None, is_self=True):
         f"## 🎃 {member.display_name}'s Profile\n"
         f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
-        f"**🎒 Items:** {len(inventory):,}"
+        f"**🎒 Items:** {len(inventory):,}\n"
+        f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
+        f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
     if inventory:
@@ -5379,8 +5402,9 @@ class HalloweenBot(commands.Cog):
             return
         target = member or interaction.user
         user = await db(ensure_user, interaction.guild.id, target.id, target.name, target.display_name)
+        clan_profile = await db(clan_member_profile, interaction.guild.id, user)
         await interaction.response.send_message(
-            view=balance_candy_view(target, user["balance"], interaction.guild.name),
+            view=balance_candy_view(target, user["balance"], interaction.guild.name, clan_profile),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="trivia", description="Answer a trivia question to earn Candy.")
@@ -5857,6 +5881,7 @@ class HalloweenBot(commands.Cog):
         guild_id = interaction.guild.id
         target = member or interaction.user
         user = await db(ensure_user, guild_id, target.id, target.name, target.display_name)
+        clan_profile = await db(clan_member_profile, guild_id, user)
         rank = await db(users.count_documents, {"guild_id": guild_id, "balance": {"$gt": int(user.get("balance", 0))}}) + 1
         last_daily = user.get("last_daily")
         next_daily = None
@@ -5865,7 +5890,14 @@ class HalloweenBot(commands.Cog):
                 last_daily = last_daily.replace(tzinfo=timezone.utc)
             next_daily = last_daily + timedelta(hours=24)
         await interaction.response.send_message(
-            view=profile_candy_view(target, user, rank, next_daily, is_self=target.id == interaction.user.id),
+            view=profile_candy_view(
+                target,
+                user,
+                rank,
+                next_daily,
+                is_self=target.id == interaction.user.id,
+                clan_profile=clan_profile,
+            ),
             allowed_mentions=discord.AllowedMentions.none())
 
 
