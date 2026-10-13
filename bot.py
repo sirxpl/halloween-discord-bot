@@ -5590,6 +5590,44 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
     return view
 
 
+
+def clan_member_leaderboard_view(guild, clan, members):
+    """Standalone Components V2 version of the member leaderboard shown by /clan's button."""
+    ui = discord.ui
+    clan_name = discord.utils.escape_markdown(str(clan.get("name", "Clan")))
+    verification = clan_verification_presentation(clan.get("verification_badge"))
+    verification_badge = f" {verification['verification_emoji']}" if verification else ""
+    icon_url = None
+    base_url = public_base_url()
+    if clan.get("icon_data") and base_url:
+        icon_url = (
+            f"{base_url}/clans/{int(guild.id)}/"
+            f"{quote(str(clan['clan_id']), safe='')}/icon"
+        )
+
+    lines = [
+        f"**{index}.** <@{member['user_id']}>"
+        + "".join(
+            f" {badge['emoji']} **{badge['label']}**"
+            for badge in member.get("badges", [])
+        )
+        + f" — **{int(member['contributed']):,} 🍬**"
+        for index, member in enumerate(members, start=1)
+    ]
+    details = "\\n".join(lines) if lines else "No members have contributed Candy yet."
+    body = f"## 🏆 {clan_name}{verification_badge} Contribution Leaderboard\\n-# {guild.name}\\n\\n{details}"
+    items = [
+        ui.Section(ui.TextDisplay(body), accessory=ui.Thumbnail(icon_url))
+        if icon_url else ui.TextDisplay(body),
+    ]
+    items.extend([
+        ui.Separator(),
+        ui.TextDisplay(f"-# Showing the top {len(members)} contributors • Use /clan to view clan progress."),
+    ])
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0x7C3AED))
+    return view
+
 def clan_leaderboard_view(guild, ranked_clans, viewer_rank=None, total_clans=None):
     """Components V2 card ranking active clans by their members' shared Candy contribution."""
     ui = discord.ui
@@ -6467,6 +6505,67 @@ class HalloweenBot(commands.Cog):
                 members,
                 interaction.user.id,
             ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @app_commands.command(name="clan_member_leaderboard", description="View the top Candy contributors in your clan or another clan.")
+    @app_commands.describe(clan_name="Optional clan name to look up; leave empty to view your clan.")
+    @app_commands.autocomplete(clan_name=clan_name_autocomplete)
+    async def clan_member_leaderboard(self, interaction: discord.Interaction, clan_name: Optional[str] = None):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "This command can only be used in a server."),
+                ephemeral=True,
+            )
+            return
+
+        # Defer immediately: MongoDB lookups and badge loading can take longer than
+        # Discord's initial interaction window.
+        await interaction.response.defer(thinking=True)
+        guild_id = int(interaction.guild.id)
+        if clan_name and clan_name.strip():
+            normalized_name = " ".join(clan_name.split()).casefold()
+            clan = await db(clans.find_one, {
+                "guild_id": guild_id,
+                "normalized_name": normalized_name,
+                "status": "active",
+            })
+            if clan is None:
+                await interaction.followup.send(
+                    view=candy_notice_view(
+                        "🏰 Clan not found",
+                        f"No active clan named **{discord.utils.escape_markdown(clan_name.strip())}** exists in this server.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+        else:
+            member_record = await db(users.find_one, {
+                "guild_id": guild_id,
+                "user_id": int(interaction.user.id),
+            })
+            clan_id = member_record.get("clan_id") if member_record else None
+            clan = await db(clans.find_one, {
+                "guild_id": guild_id,
+                "clan_id": str(clan_id),
+                "status": "active",
+            }) if clan_id else None
+            if clan is None:
+                await interaction.followup.send(
+                    view=candy_notice_view(
+                        "🏰 No clan yet",
+                        "You aren't in a clan in this server. Join one or use **/clan_member_leaderboard clan_name** to view another clan's leaderboard.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+        members = await db(clan_member_contribution_leaderboard, guild_id, clan, 10)
+        badges_by_user = await db(leaderboard_member_badges, guild_id, members)
+        for member in members:
+            member["badges"] = badges_by_user.get(int(member["user_id"]), [])
+        await interaction.followup.send(
+            view=clan_member_leaderboard_view(interaction.guild, clan, members),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
