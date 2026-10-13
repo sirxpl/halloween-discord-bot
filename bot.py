@@ -5350,13 +5350,12 @@ def balance_candy_view(member, balance, server_name, clan_profile=None):
     """Components V2 card for /balance. Same layout as the /add card."""
     ui = discord.ui
     clan_text = (
-        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}** "
-        f"{clan_profile.get('verification_emoji', '')}".rstrip()
+        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
         "## 🍬 Candy Balance\n"
-        f"**Member:** {member.mention}\n"
+        f"**Member:** {member.mention}{clan_profile.get('verification_emoji', '') if clan_profile else ''}\n"
         f"{clan_text}\n"
         f"**Balance:** {int(balance):,} 🍬\n"
         f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
@@ -5429,12 +5428,11 @@ def profile_candy_view(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
     clan_text = (
-        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}** "
-        f"{clan_profile.get('verification_emoji', '')}".rstrip()
+        f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
-        f"## 🎃 {member.display_name}'s Profile\n"
+        f"## 🎃 {member.display_name}{clan_profile.get('verification_emoji', '') if clan_profile else ''}'s Profile\n"
         + (f"{badge_text}\n" if badge_text else "")
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
