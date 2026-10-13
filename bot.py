@@ -5589,6 +5589,37 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
     return view
 
 
+def clan_leaderboard_view(guild, ranked_clans, viewer_rank=None, total_clans=None):
+    """Components V2 card ranking active clans by their members' shared Candy contribution."""
+    ui = discord.ui
+    lines = []
+    for index, row in enumerate(ranked_clans, start=1):
+        clan = row["clan"]
+        progress = row["progress"]
+        marker = RANK_MEDALS.get(index, f"**{index}.**")
+        clan_name = discord.utils.escape_markdown(str(clan.get("name", "Clan")))
+        verification = clan_verification_presentation(clan.get("verification_badge"))
+        badge = f" {verification['verification_emoji']}" if verification else ""
+        member_count = int(progress.get("member_count", 0) or 0)
+        earned = int(progress.get("earned", 0) or 0)
+        lines.append(
+            f"{marker} 🏰 **{clan_name}**{badge} — **{earned:,} 🍬**"
+            f" • {member_count:,} member{'s' if member_count != 1 else ''}"
+        )
+
+    head = f"## 🏆 Clan Leaderboard\n-# {guild.name}"
+    icon = guild.icon.url if guild.icon else None
+    items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(icon)) if icon else ui.TextDisplay(head)]
+    items += [ui.Separator(), ui.TextDisplay("\n".join(lines)[:3500])]
+    footer = f"Top {len(ranked_clans):,} of {int(total_clans if total_clans is not None else len(ranked_clans)):,} active clans"
+    if viewer_rank:
+        footer += f" • Your clan: #{viewer_rank:,}"
+    items += [ui.Separator(), ui.TextDisplay(footer)]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0x7C3AED))
+    return view
+
+
 def clean_reason(reason):
     reason = (reason or "").strip()
     return reason[:200] or None
@@ -6148,6 +6179,156 @@ class HalloweenBot(commands.Cog):
         await interaction.response.send_message(
             view=leaderboard_candy_view(interaction.guild, top_users, interaction.user, viewer_rank, viewer_balance),
             allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="clan_announcement", description="DM an announcement to your current clan members.")
+    @app_commands.describe(message="Announcement to send to members of the clan you own.")
+    async def clan_announcement(
+        self,
+        interaction: discord.Interaction,
+        message: app_commands.Range[str, 1, 1500],
+    ):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "This command can only be used in a server."),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id = int(interaction.guild.id)
+        clan = await db(clans.find_one, {
+            "guild_id": guild_id,
+            "owner_id": int(interaction.user.id),
+            "status": "active",
+        })
+        if clan is None:
+            await interaction.followup.send(
+                view=candy_notice_view(
+                    "🚫 Clan owners only",
+                    "You must be the current owner of an active clan to use **/clan_announcement**.",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        message = str(message).strip()
+        if not message:
+            await interaction.followup.send(
+                view=candy_notice_view("Empty announcement", "Please provide a message to send to your clan."),
+                ephemeral=True,
+            )
+            return
+
+        member_ids = await db(lambda: [
+            int(record["user_id"])
+            for record in users.find(
+                {
+                    "guild_id": guild_id,
+                    "clan_id": str(clan["clan_id"]),
+                    "user_id": {"$ne": int(interaction.user.id)},
+                },
+                {"user_id": 1},
+            )
+            if record.get("user_id") is not None
+        ])
+        if not member_ids:
+            await interaction.followup.send(
+                view=candy_notice_view(
+                    "📣 No members to notify",
+                    "Your clan currently has no other members to DM.",
+                    ok=True,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        clan_name = str(clan.get("name", "Clan"))
+        embed = discord.Embed(
+            title=f"📣 Announcement from {clan_name}"[:256],
+            description=message,
+            colour=0x7C3AED,
+        )
+        embed.set_author(
+            name=f"{interaction.user.display_name} • {interaction.guild.name}"[:256],
+            icon_url=interaction.user.display_avatar.url,
+        )
+        embed.set_footer(text="Sent to current members of this clan.")
+
+        async def notify_member(user_id):
+            try:
+                recipient = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                await recipient.send(
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                return True
+            except (discord.Forbidden, discord.NotFound):
+                return False
+            except discord.HTTPException:
+                log.warning("Clan announcement DM failed for user %s in clan %s.", user_id, clan.get("clan_id"), exc_info=True)
+                return False
+            except Exception:
+                log.warning("Unexpected clan announcement DM failure for user %s.", user_id, exc_info=True)
+                return False
+
+        results = await asyncio.gather(*(notify_member(user_id) for user_id in member_ids))
+        sent = sum(1 for result in results if result)
+        failed = len(results) - sent
+        summary = f"Announcement sent to **{sent:,}** of **{len(member_ids):,}** current clan members."
+        if failed:
+            summary += f"\n📪 **{failed:,}** member(s) could not be reached (for example, DMs may be closed)."
+        await interaction.followup.send(
+            view=candy_notice_view("📣 Clan announcement complete", summary, ok=(sent > 0)),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="clan_leaderboard", description="Rank the server's clans by shared Candy contribution.")
+    async def clan_leaderboard(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "This command can only be used in a server."),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+        guild_id = int(interaction.guild.id)
+        active_clans = await db(lambda: list(clans.find({
+            "guild_id": guild_id,
+            "status": "active",
+        })))
+        if not active_clans:
+            await interaction.followup.send(
+                view=candy_notice_view("🏰 Clan Leaderboard", "There are no active clans in this server yet.", ok=True),
+            )
+            return
+
+        progress_rows = await asyncio.gather(*(
+            db(clan_progress, guild_id, clan) for clan in active_clans
+        ))
+        ranked_clans = [
+            {"clan": clan, "progress": progress}
+            for clan, progress in zip(active_clans, progress_rows)
+        ]
+        ranked_clans.sort(key=lambda row: (
+            -int(row["progress"].get("earned", 0)),
+            str(row["clan"].get("name", "")).casefold(),
+            str(row["clan"].get("clan_id", "")),
+        ))
+
+        member_record = await db(users.find_one, {
+            "guild_id": guild_id,
+            "user_id": int(interaction.user.id),
+        })
+        viewer_clan_id = str(member_record.get("clan_id")) if member_record and member_record.get("clan_id") else None
+        viewer_rank = next((
+            index for index, row in enumerate(ranked_clans, start=1)
+            if viewer_clan_id and str(row["clan"].get("clan_id")) == viewer_clan_id
+        ), None)
+        await interaction.followup.send(
+            view=clan_leaderboard_view(interaction.guild, ranked_clans[:10], viewer_rank, len(ranked_clans)),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @app_commands.command(name="clan", description="View your clan or another clan's progress.")
     @app_commands.describe(clan_name="Optional clan name to look up; leave empty to view your clan.")
