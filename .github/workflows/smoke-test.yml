@@ -1,6 +1,13 @@
 name: Smoke tests
 
 on:
+  push:
+    branches: ["feature/**"]
+    paths:
+      - "bot.py"
+      - "templates/**"
+      - "requirements.txt"
+      - ".github/workflows/smoke-test.yml"
   pull_request:
     branches: [main]
     paths:
