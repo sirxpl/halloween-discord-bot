@@ -5432,7 +5432,7 @@ def profile_candy_view(
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
-        f"## 🎃 {member.display_name}{clan_profile.get('verification_emoji', '') if clan_profile else ''}'s Profile\n"
+        f"## 🎃 {member.display_name}'s Profile{(' ' + clan_profile.get('verification_emoji', '')) if clan_profile else ''}\n"
         + (f"{badge_text}\n" if badge_text else "")
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
