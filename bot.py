@@ -5199,7 +5199,12 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
 
     if show_leaderboard:
         lines = [
-            f"**{index}.** <@{member['user_id']}> — **{int(member['contributed']):,} 🍬**"
+            f"**{index}.** <@{member['user_id']}>"
+            + "".join(
+                f" {badge['emoji']} **{badge['label']}**"
+                for badge in member.get("badges", [])
+            )
+            + f" — **{int(member['contributed']):,} 🍬**"
             for index, member in enumerate(members, start=1)
         ]
         details = "\n".join(lines) if lines else "No members have contributed Candy yet."
@@ -5255,6 +5260,9 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
             current_clan,
             10,
         )
+        current_badges = await db(leaderboard_member_badges, guild.id, current_members)
+        for member in current_members:
+            member["badges"] = current_badges.get(int(member["user_id"]), [])
         await button_interaction.response.edit_message(
             view=clan_command_view(
                 guild,
@@ -5861,6 +5869,9 @@ class HalloweenBot(commands.Cog):
             db(clan_progress, guild_id, clan),
             db(clan_member_contribution_leaderboard, guild_id, clan, 10),
         )
+        badges_by_user = await db(leaderboard_member_badges, guild_id, members)
+        for member in members:
+            member["badges"] = badges_by_user.get(int(member["user_id"]), [])
         await interaction.response.send_message(
             view=clan_command_view(interaction.guild, clan, progress, members),
             allowed_mentions=discord.AllowedMentions.none(),
