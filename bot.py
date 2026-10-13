@@ -2840,6 +2840,7 @@ LOG_EVENTS = {
     "member_control":      ("member_activity", "🧭", "Member Control Changed", 0),
     "admin_add":           ("admin", "➕", "Candy Added by Admin", +1),
     "admin_subtract":      ("admin", "➖", "Candy Removed by Admin", -1),
+    "admin_reset_candy":   ("admin", "🧹", "Candy Balance Reset", -1),
     "daily_boost":         ("admin", "⚡", "Daily Boost Set", 0),
     "daily_boost_removed": ("admin", "⚡", "Daily Boost Removed", 0),
     "give_limits":         ("admin", "🎁", "Give Limits Updated", 0),
@@ -6077,6 +6078,75 @@ class HalloweenBot(commands.Cog):
                 view=candy_notice_view("📪 Couldn't send a DM",
                                        f"{member.mention} has DMs closed or has blocked the bot, so they weren't notified. The Candy change itself went through."),
                 ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="resetcandy", description="Admin: reset a member's Candy and Candy access settings.")
+    @app_commands.describe(member="The member whose Candy data should be reset.",
+                           reason="Optional reason, shown in the audit log.")
+    async def resetcandy(self, interaction: discord.Interaction, member: discord.Member,
+                         reason: Optional[app_commands.Range[str, 1, 200]] = None):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                view=candy_notice_view("🚫 Admins only", "Only Aureolis admins can use this command."),
+                ephemeral=True,
+            )
+            return
+        if not interaction.guild:
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "This command can only be used in a server."),
+                ephemeral=True,
+            )
+            return
+
+        guild_id = interaction.guild.id
+        reason = clean_reason(reason)
+        await db(ensure_user, guild_id, member.id, member.name, member.display_name)
+        previous = await db(get_user, guild_id, member.id) or {}
+        previous_balance = int(previous.get("balance", 0) or 0)
+
+        updated = await db(
+            users.find_one_and_update,
+            {"guild_id": guild_id, "user_id": member.id},
+            {"$set": {"balance": 0, "candy_earned_total": 0}},
+            return_document=ReturnDocument.AFTER,
+        )
+        # Reset both server-scoped restrictions so the member can earn Candy and appear
+        # on the leaderboard again. Keep an audit trail of who performed the reset.
+        await db(
+            member_controls.update_one,
+            {"guild_id": guild_id, "user_id": member.id},
+            {"$set": {
+                "guild_id": guild_id,
+                "user_id": member.id,
+                "blocked_from_candy": False,
+                "leaderboard_excluded": False,
+                "updated_at": now_utc(),
+                "updated_by": interaction.user.id,
+            }},
+            upsert=True,
+        )
+
+        details = {
+            "changed_by": interaction.user.id,
+            "previous_balance": previous_balance,
+            "controls_reset": ["blocked_from_candy", "leaderboard_excluded"],
+        }
+        if reason:
+            details["reason"] = reason
+        await db(
+            log_activity, "admin_reset_candy", member.id, member.name,
+            guild_id, previous_balance, details,
+        )
+
+        await interaction.response.send_message(
+            view=candy_notice_view(
+                "🧹 Candy Reset Complete",
+                f"Reset {member.mention}'s Candy balance to **0** and lifetime Candy earned to **0**. "
+                "They can participate in Candy activities again and will be included on the Candy leaderboard. "
+                "Their shop inventory and clan membership were left unchanged.",
+                ok=True,
+            ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @app_commands.command(name="give", description="Give Candy to another member.")
     @app_commands.describe(member="The member receiving Candy.", amount="Amount of Candy to give.")
