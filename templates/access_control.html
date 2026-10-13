@@ -31,7 +31,13 @@
     .boost-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 15px;border:1px solid var(--border);border-radius:12px;background:#171722}
     .boost-name{font-weight:800;color:#fbbf24}.boost-multiplier{color:#86efac;font-weight:800}
     .boost-remove{padding:8px 11px;border:1px solid #633232;border-radius:10px;background:#3b2020;color:#fca5a5;font:inherit;font-size:11px;font-weight:800;cursor:pointer}
+    .clan-verification-form{display:grid;grid-template-columns:1.5fr 1fr auto;gap:12px;margin-top:18px;align-items:end}
+    .clan-verification-form label{display:block;color:var(--muted);font-size:11px}
+    .clan-verification-form select{width:100%;min-height:42px;margin-top:6px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:#11111a;color:var(--text);font:inherit}
+    .clan-verification-chip{display:inline-flex;align-items:center;gap:7px}
+    .clan-verification-chip img{width:22px;height:22px;object-fit:contain}
     @media (max-width: 760px){.boost-form{grid-template-columns:1fr}.boost-row{align-items:flex-start;flex-direction:column}.boost-row form{width:100%}}
+    @media(max-width:760px){.clan-verification-form{grid-template-columns:1fr}}
     .badge-config-form{display:grid;grid-template-columns:1.1fr 1.2fr 1fr 1fr 1fr auto;gap:12px;margin-top:18px;align-items:end}
     .badge-field label{display:block;color:var(--muted);font-size:11px;margin:0 0 6px}
     .badge-field select,.badge-field input{width:100%;min-height:42px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:#11111a;color:var(--text);font:inherit}
@@ -238,6 +244,51 @@
         <button type="submit" class="command-toggle enabled">Save clan thresholds</button>
       </form>
       <div class="boost-note">The clan starts with <strong>0 Candy</strong>. Only Candy earned after each member joins counts toward the shared progress. The daily bonus multiplies with other daily boosts.</div>
+      {% else %}<p class="muted">The bot is not connected to any servers right now.</p>{% endif %}
+    </div>
+
+    <div class="access-card">
+      <div class="access-header">
+        <div><h2>✅ Clan verification</h2><p class="muted">Assign a Verified or Verified+ badge to an active clan. The badge appears beside the clan name.</p></div>
+      </div>
+      {% if request.args.get('clan_verification_saved') %}<div class="gl-flash ok">✓ Clan verification saved.</div>{% endif %}
+      {% if request.args.get('clan_verification_error') %}<div class="gl-flash err">That clan verification could not be saved. Select an active clan and a supported badge.</div>{% endif %}
+      {% if boost_guild_id %}
+        {% if clan_verification_clans %}
+        <form method="post" action="{{ url_for('access_control_clan_verification_save') }}" class="clan-verification-form">
+          <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+          <label>Clan
+            <select name="clan_id" required>
+              <option value="" disabled selected>Select a clan...</option>
+              {% for clan in clan_verification_clans %}<option value="{{ clan.clan_id }}">{{ clan.name }}{% if clan.verification_label %} (currently {{ clan.verification_label }}){% endif %}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Verification badge
+            <select name="badge_type" required>
+              {% for key, label in clan_verification_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </label>
+          <button type="submit" class="command-toggle enabled">Save verification</button>
+        </form>
+        {% set verified_clans = clan_verification_clans|selectattr('verification_label')|list %}
+        {% if verified_clans %}
+        <div class="server-list">
+          {% for clan in verified_clans %}
+          <div class="server-row">
+            <div>
+              <div class="server-name"><span class="clan-verification-chip"><img src="{{ clan.verification_icon_url }}" alt="{{ clan.verification_label }} badge">{{ clan.name }}</span> <span class="access-badge">{{ clan.verification_label }}</span></div>
+              <div class="server-id">Server {{ boost_guild_id }}</div>
+            </div>
+            <form method="post" action="{{ url_for('access_control_clan_verification_remove') }}" style="margin:0">
+              <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+              <input type="hidden" name="clan_id" value="{{ clan.clan_id }}">
+              <button class="boost-remove" type="submit">Remove</button>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}<p class="badge-empty">No clans have a verification badge yet.</p>{% endif %}
+        {% else %}<p class="badge-empty">No active clans are available in this server.</p>{% endif %}
       {% else %}<p class="muted">The bot is not connected to any servers right now.</p>{% endif %}
     </div>
 

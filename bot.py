@@ -83,6 +83,7 @@ BADGE_TYPES = {
     "carry-team": ("Carry Team", "carryteamicon", "1559355729952112731"),
     "administrator": ("Administrator", "administratoricon", "1559355728446365726"),
 }
+CLAN_VERIFICATION_TYPES = ("verified", "verified-plus")
 CLAN_DEFAULT_DISCOUNT_THRESHOLD = 5000
 CLAN_DEFAULT_DAILY_THRESHOLD = 5000
 CLAN_DISCOUNT_PERCENT = 10
@@ -241,6 +242,7 @@ def send_clan_dm(user_id, message):
 
 def clan_public_data(guild_id, clan):
     progress = clan_progress(guild_id, clan)
+    verification_badge = clan_verification_presentation(clan.get("verification_badge"))
     return {
         "clan_id": clan["clan_id"],
         "name": clan["name"],
@@ -248,7 +250,20 @@ def clan_public_data(guild_id, clan):
         "owner_id": int(clan["owner_id"]),
         "icon_url": url_for("clan_icon", guild_id=int(guild_id), clan_id=clan["clan_id"])
             if clan.get("icon_data") else None,
+        **verification_badge,
         **progress,
+    }
+
+
+def clan_verification_presentation(badge_type):
+    if badge_type not in CLAN_VERIFICATION_TYPES:
+        return {}
+    label, emoji_name, emoji_id = BADGE_TYPES[badge_type]
+    return {
+        "verification_badge": badge_type,
+        "verification_label": label,
+        "verification_emoji": f"<:{emoji_name}:{emoji_id}>",
+        "verification_icon_url": f"https://cdn.discordapp.com/emojis/{emoji_id}.png?size=64",
     }
 
 
@@ -4049,6 +4064,17 @@ def access_control_page():
         "rules_js": [{**rule, "role_ids": [str(r) for r in rule["role_ids"]]} for rule in cooldown_config["rules"]],
     }
     badge_configs = get_badge_configs(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
+    clan_verification_clans = []
+    if selected_boost_guild_id.isdigit():
+        for clan in clans.find(
+            {"guild_id": int(selected_boost_guild_id), "status": "active"},
+            {"clan_id": 1, "name": 1, "verification_badge": 1},
+        ).sort("name", 1):
+            clan_verification_clans.append({
+                "clan_id": clan["clan_id"],
+                "name": clan["name"],
+                **clan_verification_presentation(clan.get("verification_badge")),
+            })
     clan_settings = get_clan_config(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else {
         "discount_threshold": CLAN_DEFAULT_DISCOUNT_THRESHOLD,
         "daily_threshold": CLAN_DEFAULT_DAILY_THRESHOLD,
@@ -4065,6 +4091,10 @@ def access_control_page():
         boost_roles=boost_roles,
         badge_configs=badge_configs,
         badge_types=[(key, value[0]) for key, value in BADGE_TYPES.items()],
+        clan_verification_clans=clan_verification_clans,
+        clan_verification_types=[
+            (key, BADGE_TYPES[key][0]) for key in CLAN_VERIFICATION_TYPES
+        ],
         clan_settings=clan_settings,
         daily_boosts=saved_daily_boosts,
         limit_cards=limit_cards,
@@ -4251,6 +4281,116 @@ def access_control_clan_settings():
         ))
     return redirect(url_for(
         "access_control_page", boost_guild=guild_id, clan_saved="1",
+    ))
+
+
+@app.post("/access-control/clan-verification/save")
+def access_control_clan_verification_save():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        clan_id = request.form.get("clan_id", "").strip()
+        badge_type = request.form.get("badge_type", "")
+        bot = BOT.get("instance")
+        if (
+            not bot
+            or bot.is_closed()
+            or bot.get_guild(guild_id) is None
+            or not clan_id
+            or badge_type not in CLAN_VERIFICATION_TYPES
+        ):
+            raise ValueError
+        clan = clans.find_one_and_update(
+            {
+                "guild_id": guild_id,
+                "clan_id": clan_id,
+                "status": "active",
+            },
+            {"$set": {
+                "verification_badge": badge_type,
+                "verification_updated_at": now_utc(),
+                "verification_updated_by": int(user["id"]),
+            }},
+            return_document=ReturnDocument.AFTER,
+        )
+        if clan is None:
+            raise ValueError
+        log_activity(
+            "clan_verification_updated",
+            user_id=user["id"],
+            username=user.get("username"),
+            guild_id=guild_id,
+            details={"clan_id": clan_id, "badge_type": badge_type},
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for(
+            "access_control_page",
+            boost_guild=guild_id_raw,
+            clan_verification_error="invalid",
+        ))
+    return redirect(url_for(
+        "access_control_page",
+        boost_guild=guild_id,
+        clan_verification_saved="1",
+    ))
+
+
+@app.post("/access-control/clan-verification/remove")
+def access_control_clan_verification_remove():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("login"))
+    if not is_admin(user["id"]):
+        return "Forbidden", 403
+    guild_id_raw = request.form.get("guild_id", "")
+    try:
+        guild_id = int(guild_id_raw)
+        clan_id = request.form.get("clan_id", "").strip()
+        bot = BOT.get("instance")
+        if (
+            not bot
+            or bot.is_closed()
+            or bot.get_guild(guild_id) is None
+            or not clan_id
+        ):
+            raise ValueError
+        result = clans.update_one(
+            {
+                "guild_id": guild_id,
+                "clan_id": clan_id,
+                "status": "active",
+                "verification_badge": {"$in": list(CLAN_VERIFICATION_TYPES)},
+            },
+            {"$unset": {
+                "verification_badge": "",
+                "verification_updated_at": "",
+                "verification_updated_by": "",
+            }},
+        )
+        if not result.modified_count:
+            raise ValueError
+        log_activity(
+            "clan_verification_removed",
+            user_id=user["id"],
+            username=user.get("username"),
+            guild_id=guild_id,
+            details={"clan_id": clan_id},
+        )
+    except (TypeError, ValueError):
+        return redirect(url_for(
+            "access_control_page",
+            boost_guild=guild_id_raw,
+            clan_verification_error="invalid",
+        ))
+    return redirect(url_for(
+        "access_control_page",
+        boost_guild=guild_id,
+        clan_verification_saved="1",
     ))
 
 
@@ -5189,6 +5329,11 @@ def leaderboard_candy_view(guild, rows, viewer, viewer_rank=None, viewer_balance
 def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
     ui = discord.ui
     clan_name = discord.utils.escape_markdown(str(clan.get("name", "Clan")))
+    verification = clan_verification_presentation(clan.get("verification_badge"))
+    verification_label = (
+        f" {verification['verification_emoji']} **{verification['verification_label']}**"
+        if verification else ""
+    )
     icon_url = None
     base_url = public_base_url()
     if clan.get("icon_data") and base_url:
@@ -5208,14 +5353,14 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
             for index, member in enumerate(members, start=1)
         ]
         details = "\n".join(lines) if lines else "No members have contributed Candy yet."
-        body = f"## 🏆 {clan_name} Contribution Leaderboard\n-# {guild.name}\n\n{details}"
+        body = f"## 🏆 {clan_name}{verification_label} Contribution Leaderboard\n-# {guild.name}\n\n{details}"
         button_label = "Show clan overview"
         button_style = discord.ButtonStyle.secondary
     else:
         discount_status = "Unlocked" if progress["discount_unlocked"] else "Locked"
         daily_status = "Unlocked" if progress["daily_unlocked"] else "Locked"
         body = (
-            f"## 🏰 {clan_name}\n"
+            f"## 🏰 {clan_name}{verification_label}\n"
             f"**Members:** {int(progress['member_count']):,}\n"
             f"**Shared Candy contributed:** {int(progress['earned']):,} 🍬\n\n"
             f"**10% shop discount:** {int(progress['earned']):,} / "
