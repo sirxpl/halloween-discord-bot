@@ -5128,7 +5128,9 @@ def profile_candy_view(
     """Components V2 card for /profile."""
     ui = discord.ui
     inventory = user.get("inventory", []) or []
-    badge_text = " ".join(badge["emoji"] for badge in badges or [])
+    badge_text = " ".join(
+        f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
+    )
     head = (
         f"## 🎃 {member.display_name}'s Profile\n"
         + (f"{badge_text}\n" if badge_text else "")
@@ -5165,7 +5167,10 @@ def leaderboard_candy_view(guild, rows, viewer, viewer_rank=None, viewer_balance
     lines = []
     for index, row in enumerate(rows, start=1):
         marker = RANK_MEDALS.get(index, f"**{index}.**")
-        badges = " ".join(badge["emoji"] for badge in row.get("badges", []))
+        badges = " ".join(
+            f"{badge['emoji']} **{badge['label']}**"
+            for badge in row.get("badges", [])
+        )
         badge_text = f" {badges}" if badges else ""
         lines.append(f"{marker} <@{row['user_id']}>{badge_text} — **{int(row['balance']):,} 🍬**")
     head = f"## 🏆 Candy Leaderboard\n-# {guild.name}"
