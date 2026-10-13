@@ -5550,13 +5550,16 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
                 ephemeral=True,
             )
             return
+        # Button interactions have the same short acknowledgement deadline as commands.
+        # Defer the component update before any potentially slow database work.
+        await button_interaction.response.defer()
         current_clan = await db(clans.find_one, {
             "guild_id": int(guild.id),
             "clan_id": str(clan["clan_id"]),
             "status": "active",
         })
         if current_clan is None:
-            await button_interaction.response.send_message(
+            await button_interaction.followup.send(
                 "This clan is no longer available.",
                 ephemeral=True,
             )
@@ -5571,7 +5574,7 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
         current_badges = await db(leaderboard_member_badges, guild.id, current_members)
         for member in current_members:
             member["badges"] = current_badges.get(int(member["user_id"]), [])
-        await button_interaction.response.edit_message(
+        await button_interaction.edit_original_response(
             view=clan_command_view(
                 guild,
                 current_clan,
