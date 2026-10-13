@@ -6341,6 +6341,8 @@ class HalloweenBot(commands.Cog):
             )
             return
 
+        # Acknowledge immediately so slower database/leaderboard work cannot time out.
+        await interaction.response.defer(thinking=True)
         guild_id = interaction.guild.id
         if clan_name and clan_name.strip():
             normalized_name = " ".join(clan_name.split()).casefold()
@@ -6350,7 +6352,7 @@ class HalloweenBot(commands.Cog):
                 "status": "active",
             })
             if clan is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     view=candy_notice_view(
                         "🏰 Clan not found",
                         f"No active clan named **{discord.utils.escape_markdown(clan_name.strip())}** exists in this server.",
@@ -6370,7 +6372,7 @@ class HalloweenBot(commands.Cog):
                 "status": "active",
             }) if clan_id else None
             if clan is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     view=candy_notice_view(
                         "🏰 No clan yet",
                         "You aren't in a clan in this server. Join one or start a creation request on the **Clans** page, or use `/clan clan_name` to look up another clan.",
@@ -6386,7 +6388,7 @@ class HalloweenBot(commands.Cog):
         badges_by_user = await db(leaderboard_member_badges, guild_id, members)
         for member in members:
             member["badges"] = badges_by_user.get(int(member["user_id"]), [])
-        await interaction.response.send_message(
+        await interaction.followup.send(
             view=clan_command_view(
                 interaction.guild,
                 clan,
