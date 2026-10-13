@@ -7,6 +7,8 @@
   .profile-badges{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:0}
   .profile-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(10,8,15,.72);color:#e8e3ef;font-size:13px;font-weight:750;white-space:nowrap}
   .profile-badge img{width:20px;height:20px;object-fit:contain}
+  .clan-profile-name{display:inline-flex;align-items:center;gap:7px}
+  .clan-profile-name img{width:22px;height:22px;object-fit:contain}
 </style>
 <main class="section-main wrap">
 <section class="profile-hero">
@@ -48,6 +50,7 @@
 <section class="grid">
   <div class="card"><span class="label">🍬 Candy Balance</span><span class="value">{{ "{:,}".format(profile.balance if profile else 0) }}</span><span class="sub">Current event balance</span></div>
   <div class="card"><span class="label">🏆 Leaderboard Rank</span><span class="value">{{ "#" ~ rank if rank else "—" }}</span><span class="sub">Current ranking</span></div>
+  <div class="card"><span class="label">🏰 Clan</span><span class="value clan-profile-name">{% if clan_profile %}{{ clan_profile.name }}{% if clan_profile.verification_icon_url %}<img src="{{ clan_profile.verification_icon_url }}" alt="" title="{{ clan_profile.verification_label }}">{% endif %}{% else %}Not in a clan{% endif %}</span><span class="sub">{% if clan_profile %}{{ "{:,}".format(clan_profile.contributed) }} Candy contributed{% else %}No clan contribution{% endif %}</span></div>
   <div class="card"><span class="label">🎒 Inventory Items</span><span class="value">{{ profile.inventory|length if profile else 0 }}</span><span class="sub">Collected items</span></div>
   <div class="card"><span class="label">🎃 Quests Completed</span><span class="value">{{ profile.quests_completed if profile and profile.quests_completed is defined else 0 }}</span><span class="sub">Halloween progress</span></div>
 </section>

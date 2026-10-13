@@ -2216,6 +2216,7 @@ def clan_progress(guild_id, clan):
 
 
 def clan_member_profile(guild_id, member_record):
+    member_record = member_record or {}
     clan_id = member_record.get("clan_id")
     if not clan_id:
         return None
@@ -2231,6 +2232,7 @@ def clan_member_profile(guild_id, member_record):
     return {
         "name": clan.get("name", "Unknown Clan"),
         "contributed": max(0, earned_total - earned_at_join),
+        **clan_verification_presentation(clan.get("verification_badge")),
     }
 
 
@@ -3571,6 +3573,7 @@ def profile_page():
             avatar_url=None,
             guild=None,
             profile=None,
+            clan_profile=None,
             rank=None,
             account_created=None,
             next_daily=None,
@@ -3585,6 +3588,7 @@ def profile_page():
     if guild:
         guild_id = int(guild["id"])
         profile = users.find_one({"guild_id": guild_id, "user_id": int(user["id"])})
+        clan_profile = clan_member_profile(guild_id, profile)
         badge_configs = get_badge_configs(guild_id)
         needs_role_member = any(config["target_type"] == "role" for config in badge_configs)
         member = get_bot_member(guild_id, user["id"]) if needs_role_member else None
@@ -3609,6 +3613,7 @@ def profile_page():
         avatar_url=discord_avatar_url(user),
         guild=guild,
         profile=profile,
+        clan_profile=clan_profile if guild else None,
         rank=rank,
         account_created=account_created,
         next_daily=next_daily,
@@ -5191,11 +5196,16 @@ def trick_or_treat_view(member, reward, new_balance, next_at, jackpot_rewards=No
 def balance_candy_view(member, balance, server_name, clan_profile=None):
     """Components V2 card for /balance. Same layout as the /add card."""
     ui = discord.ui
+    clan_name = (
+        f"{discord.utils.escape_markdown(clan_profile['name'])}"
+        f" {clan_profile.get('verification_emoji', '')}".rstrip()
+        if clan_profile else "Not in a clan"
+    )
     head = (
         "## 🍬 Candy Balance\n"
         f"**Member:** {member.mention}\n"
         f"**Balance:** {int(balance):,} 🍬\n"
-        f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
+        f"**🏰 Clan:** {clan_name}\n"
         f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [
@@ -5265,13 +5275,18 @@ def profile_candy_view(
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
+    clan_name = (
+        f"{discord.utils.escape_markdown(clan_profile['name'])}"
+        f" {clan_profile.get('verification_emoji', '')}".rstrip()
+        if clan_profile else "Not in a clan"
+    )
     head = (
         f"## 🎃 {member.display_name}'s Profile\n"
         + (f"{badge_text}\n" if badge_text else "")
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
         + f"**🎒 Items:** {len(inventory):,}\n"
-        + f"**🏰 Clan:** {discord.utils.escape_markdown(clan_profile['name']) if clan_profile else 'Not in a clan'}\n"
+        + f"**🏰 Clan:** {clan_name}\n"
         + f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url))]
@@ -5324,10 +5339,7 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
     ui = discord.ui
     clan_name = discord.utils.escape_markdown(str(clan.get("name", "Clan")))
     verification = clan_verification_presentation(clan.get("verification_badge"))
-    verification_label = (
-        f" {verification['verification_emoji']} **{verification['verification_label']}**"
-        if verification else ""
-    )
+    verification_badge = f" {verification['verification_emoji']}" if verification else ""
     icon_url = None
     base_url = public_base_url()
     if clan.get("icon_data") and base_url:
@@ -5347,14 +5359,14 @@ def clan_command_view(guild, clan, progress, members, show_leaderboard=False):
             for index, member in enumerate(members, start=1)
         ]
         details = "\n".join(lines) if lines else "No members have contributed Candy yet."
-        body = f"## 🏆 {clan_name}{verification_label} Contribution Leaderboard\n-# {guild.name}\n\n{details}"
+        body = f"## 🏆 {clan_name}{verification_badge} Contribution Leaderboard\n-# {guild.name}\n\n{details}"
         button_label = "Show clan overview"
         button_style = discord.ButtonStyle.secondary
     else:
         discount_status = "Unlocked" if progress["discount_unlocked"] else "Locked"
         daily_status = "Unlocked" if progress["daily_unlocked"] else "Locked"
         body = (
-            f"## 🏰 {clan_name}{verification_label}\n"
+            f"## 🏰 {clan_name}{verification_badge}\n"
             f"**Members:** {int(progress['member_count']):,}\n"
             f"**Shared Candy contributed:** {int(progress['earned']):,} 🍬\n\n"
             f"**10% shop discount:** {int(progress['earned']):,} / "
