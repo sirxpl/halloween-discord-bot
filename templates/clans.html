@@ -39,15 +39,15 @@
     .crop-modal[hidden]{display:none}
     .crop-modal{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:18px;background:rgba(5,3,9,.82);backdrop-filter:blur(8px)}
     .crop-dialog{width:min(620px,100%);max-height:calc(100vh - 36px);overflow:auto;padding:20px;border:1px solid rgba(255,255,255,.14);border-radius:18px;background:#17111f;box-shadow:0 24px 80px rgba(0,0,0,.5)}
-    .crop-stage{position:relative;width:100%;aspect-ratio:1;max-height:56vh;overflow:hidden;border-radius:12px;background:#09070d;touch-action:none;cursor:grab}
-    .crop-stage.banner{aspect-ratio:3/1}
+    .crop-stage{position:relative;width:min(100%,480px);aspect-ratio:1;margin-inline:auto;overflow:hidden;border-radius:12px;background:#09070d;touch-action:none;cursor:grab}
+    .crop-stage.banner{width:100%;max-width:600px;aspect-ratio:3/1}
     .crop-stage:active{cursor:grabbing}
     .crop-stage img{position:absolute;max-width:none;max-height:none;user-select:none;-webkit-user-drag:none;pointer-events:none}
     .crop-controls{display:flex;align-items:center;gap:12px;margin:14px 0}
     .crop-controls input{flex:1;min-width:0}
     .crop-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
     .crop-error{color:#fca5a5;font-size:13px;min-height:18px}
-    @media(max-width:600px){.clan-banner-panel{min-height:128px;padding:14px}.clan-icon,.clan-placeholder{width:56px;height:56px;border-radius:15px}.crop-dialog{padding:14px}.crop-stage{max-height:48vh}}
+    @media(max-width:600px){.clan-banner-panel{min-height:128px;padding:14px}.clan-icon,.clan-placeholder{width:56px;height:56px;border-radius:15px}.crop-dialog{padding:14px}.crop-stage{width:min(100%,min(480px,52vh))}.crop-stage.banner{width:min(100%,calc(52vh * 3))}}
     .clan-head h3{margin:0}
     .clan-name-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .clan-verification{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(10,8,15,.72);color:#e8e3ef;font-size:11px;font-weight:750;white-space:nowrap}
