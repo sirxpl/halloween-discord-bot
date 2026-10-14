@@ -5802,26 +5802,38 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
                 ephemeral=True,
             )
             return
-        current_progress = await db(clan_progress, guild.id, current_clan)
-        current_members = await db(
-            clan_member_contribution_leaderboard,
-            guild.id,
-            current_clan,
-            10,
-        )
-        current_badges = await db(leaderboard_member_badges, guild.id, current_members)
-        for member in current_members:
-            member["badges"] = current_badges.get(int(member["user_id"]), [])
-        await button_interaction.response.edit_message(
-            view=clan_command_view(
-                guild,
-                current_clan,
-                current_progress,
-                current_members,
-                owner_id,
-                not show_leaderboard,
-            ),
-        )
+        # Acknowledge the click before database work so the component cannot time out.
+        await button_interaction.response.defer()
+        try:
+            current_progress, current_members = await asyncio.gather(
+                db(clan_progress, guild.id, current_clan),
+                db(clan_member_contribution_leaderboard, guild.id, current_clan, 10),
+            )
+            current_badges = await db(leaderboard_member_badges, guild.id, current_members)
+            for member in current_members:
+                member["badges"] = current_badges.get(int(member["user_id"]), [])
+            await button_interaction.edit_original_response(
+                view=clan_command_view(
+                    guild,
+                    current_clan,
+                    current_progress,
+                    current_members,
+                    owner_id,
+                    not show_leaderboard,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception:
+            log.exception(
+                "Failed to toggle clan overview/leaderboard for clan %s in guild %s",
+                clan.get("clan_id"),
+                guild.id,
+            )
+            await button_interaction.followup.send(
+                "I couldn't load that clan view just now. Please try again or use "
+                "/clan_contributers_leaderboard.",
+                ephemeral=True,
+            )
 
     button.callback = toggle_leaderboard
     items.extend([ui.Separator(), ui.ActionRow(button)])
@@ -6733,6 +6745,89 @@ class HalloweenBot(commands.Cog):
                 progress,
                 members,
                 interaction.user.id,
+            ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @app_commands.command(
+        name="clan_contributers_leaderboard",
+        description="Show a clan's top Candy contributors.",
+    )
+    @app_commands.describe(
+        clan_name="Optional clan name; leave empty to view your own clan's leaderboard.",
+    )
+    @app_commands.autocomplete(clan_name=clan_name_autocomplete)
+    async def clan_contributers_leaderboard(
+        self,
+        interaction: discord.Interaction,
+        clan_name: Optional[str] = None,
+    ):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                view=candy_notice_view(
+                    "Server only",
+                    "This command can only be used in a server.",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        guild_id = interaction.guild.id
+        if clan_name and clan_name.strip():
+            normalized_name = " ".join(clan_name.split()).casefold()
+            clan = await db(clans.find_one, {
+                "guild_id": guild_id,
+                "normalized_name": normalized_name,
+                "status": "active",
+            })
+            if clan is None:
+                await interaction.followup.send(
+                    view=candy_notice_view(
+                        "🏰 Clan not found",
+                        f"No active clan named **{discord.utils.escape_markdown(clan_name.strip())}** exists in this server.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+        else:
+            member_record = await db(users.find_one, {
+                "guild_id": guild_id,
+                "user_id": interaction.user.id,
+            })
+            clan_id = member_record.get("clan_id") if member_record else None
+            clan = await db(clans.find_one, {
+                "guild_id": guild_id,
+                "clan_id": str(clan_id),
+                "status": "active",
+            }) if clan_id else None
+            if clan is None:
+                await interaction.followup.send(
+                    view=candy_notice_view(
+                        "🏰 No clan yet",
+                        "You aren't in a clan in this server. Join one first, or use "
+                        "/clan_contributers_leaderboard clan_name to view another clan's leaderboard.",
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+        progress, members = await asyncio.gather(
+            db(clan_progress, guild_id, clan),
+            db(clan_member_contribution_leaderboard, guild_id, clan, 10),
+        )
+        badges_by_user = await db(leaderboard_member_badges, guild_id, members)
+        for member in members:
+            member["badges"] = badges_by_user.get(int(member["user_id"]), [])
+
+        await interaction.followup.send(
+            view=clan_command_view(
+                interaction.guild,
+                clan,
+                progress,
+                members,
+                interaction.user.id,
+                show_leaderboard=True,
             ),
             allowed_mentions=discord.AllowedMentions.none(),
         )
