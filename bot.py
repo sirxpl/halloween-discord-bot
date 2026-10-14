@@ -6507,8 +6507,15 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="leaderboard", description="Show the server Candy leaderboard.")
     async def leaderboard(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message(view=candy_notice_view("Server only", "This command can only be used in a server."), ephemeral=True)
+            await interaction.response.send_message(
+                view=candy_notice_view("Server only", "This command can only be used in a server."),
+                ephemeral=True,
+            )
             return
+
+        # Acknowledge immediately: MongoDB and badge lookups can exceed Discord's
+        # interaction response deadline.
+        await interaction.response.defer(thinking=True)
         guild_id = interaction.guild.id
 
         def load():
@@ -6524,16 +6531,31 @@ class HalloweenBot(commands.Cog):
                         {"guild_id": guild_id, "user_id": {"$nin": excluded}, "balance": {"$gt": viewer_balance}}) + 1
             return top, viewer_rank, viewer_balance
 
-        top_users, viewer_rank, viewer_balance = await db(load)
-        if not top_users:
-            await interaction.response.send_message(view=candy_notice_view("🍬 Candy Leaderboard", "Nobody has earned Candy yet!", ok=True))
-            return
-        badges_by_user = await db(leaderboard_member_badges, guild_id, top_users)
-        for row in top_users:
-            row["badges"] = badges_by_user.get(int(row["user_id"]), [])
-        await interaction.response.send_message(
-            view=leaderboard_candy_view(interaction.guild, top_users, interaction.user, viewer_rank, viewer_balance),
-            allowed_mentions=discord.AllowedMentions.none())
+        try:
+            top_users, viewer_rank, viewer_balance = await db(load)
+            if not top_users:
+                await interaction.followup.send(
+                    view=candy_notice_view("🍬 Candy Leaderboard", "Nobody has earned Candy yet!", ok=True)
+                )
+                return
+            badges_by_user = await db(leaderboard_member_badges, guild_id, top_users)
+            for row in top_users:
+                row["badges"] = badges_by_user.get(int(row["user_id"]), [])
+            await interaction.followup.send(
+                view=leaderboard_candy_view(
+                    interaction.guild, top_users, interaction.user, viewer_rank, viewer_balance
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except Exception:
+            log.exception("Main Candy leaderboard command failed")
+            await interaction.followup.send(
+                view=candy_notice_view(
+                    "Leaderboard unavailable",
+                    "I couldn't load the Candy leaderboard just now. Please try again in a moment.",
+                ),
+                ephemeral=True,
+            )
 
     @app_commands.command(name="clan_announcement", description="DM an announcement to your current clan members.")
     @app_commands.describe(message="Announcement to send to members of the clan you own.")
