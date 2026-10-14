@@ -1,0 +1,53 @@
+name: Smoke tests
+
+on:
+  push:
+    branches: ["feature/**"]
+    paths:
+      - "bot.py"
+      - "templates/**"
+      - "requirements.txt"
+      - ".github/workflows/smoke-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "bot.py"
+      - "templates/**"
+      - "requirements.txt"
+      - ".github/workflows/smoke-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-templates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Python source
+        run: python -m py_compile bot.py
+      - name: Parse every Jinja template
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from jinja2 import Environment, FileSystemLoader
+
+          template_dir = Path("templates")
+          env = Environment(loader=FileSystemLoader(str(template_dir)))
+          files = sorted(template_dir.rglob("*.html"))
+          if not files:
+              raise SystemExit("No HTML templates found")
+          for path in files:
+              relative = path.relative_to(template_dir).as_posix()
+              env.parse(path.read_text(encoding="utf-8"))
+              print(f"OK: {relative}")
+          print(f"Parsed {len(files)} templates successfully.")
+          PY

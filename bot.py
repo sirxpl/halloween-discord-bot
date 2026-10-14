@@ -17,7 +17,7 @@ from discord.ext import commands
 from flask import Flask, Response, jsonify, render_template, request, redirect, session, url_for
 from flask_session import Session
 from pymongo import MongoClient, ReturnDocument
-from pymongo.errors import PyMongoError
+from pymongo.errors import PyMongoError, DuplicateKeyError
 from dotenv import load_dotenv
 from urllib.parse import urlencode, urlparse, parse_qs, quote
 import secrets
@@ -66,6 +66,8 @@ arcane_level_rewards = db["arcane_level_rewards"]
 user_authorizations = db["user_authorizations"]
 oauth_transactions = db["oauth_transactions"]
 clans = db["clans"]
+site_assets = db["site_assets"]
+survey_submissions = db["survey_submissions"]
 clan_creation_requests = db["clan_creation_requests"]
 clan_join_requests = db["clan_join_requests"]
 clan_invites = db["clan_invites"]
@@ -90,11 +92,14 @@ CLAN_DEFAULT_DAILY_THRESHOLD = 5000
 CLAN_DISCOUNT_PERCENT = 10
 CLAN_DAILY_MULTIPLIER = 1.25
 CLAN_ICON_MAX_BYTES = 2 * 1024 * 1024
+CLAN_BANNER_MAX_BYTES = 4 * 1024 * 1024
+SURVEY_BANNER_MAX_BYTES = 4 * 1024 * 1024
+SURVEY_REWARD_CANDY = 10_000
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
-app.config["MAX_CONTENT_LENGTH"] = CLAN_ICON_MAX_BYTES + 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = CLAN_BANNER_MAX_BYTES + CLAN_ICON_MAX_BYTES + 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
@@ -111,7 +116,7 @@ Session(app)
 def require_web_login_screen():
     if request.method not in {"GET", "HEAD"}:
         return None
-    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page", "authorize_page", "authorized_page", "clan_icon"}
+    public_endpoints = {"static", "home", "dashboard", "login", "oauth_callback", "logout", "status_page", "status_json", "health", "terms_page", "privacy_page", "authorize_page", "authorized_page", "clan_icon", "clan_banner", "survey_page", "survey_login", "survey_banner_asset"}
     if request.endpoint in public_endpoints:
         return None
     if not session.get("discord_user"):
@@ -251,6 +256,8 @@ def clan_public_data(guild_id, clan):
         "owner_id": int(clan["owner_id"]),
         "icon_url": url_for("clan_icon", guild_id=int(guild_id), clan_id=clan["clan_id"])
             if clan.get("icon_data") else None,
+        "banner_url": url_for("clan_banner", guild_id=int(guild_id), clan_id=clan["clan_id"])
+            if clan.get("banner_data") else None,
         **verification_badge,
         **progress,
     }
@@ -373,6 +380,19 @@ def clan_upload_data():
     return data, mime_type
 
 
+def clan_upload_banner_data():
+    uploaded = request.files.get("clan_banner")
+    if uploaded is None or not uploaded.filename:
+        return None, None
+    data = uploaded.stream.read(CLAN_BANNER_MAX_BYTES + 1)
+    if not data or len(data) > CLAN_BANNER_MAX_BYTES:
+        raise ValueError("banner_size")
+    mime_type = clan_image_mime(data)
+    if mime_type is None:
+        raise ValueError("banner_type")
+    return data, mime_type
+
+
 @app.get("/clans")
 def clans_page():
     user = session.get("discord_user")
@@ -450,6 +470,17 @@ def clan_icon(guild_id, clan_id):
     }:
         return "", 404
     response = Response(bytes(clan["icon_data"]), mimetype=clan["icon_mime"])
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.get("/clans/<int:guild_id>/<clan_id>/banner")
+def clan_banner(guild_id, clan_id):
+    clan = clans.find_one({"guild_id": int(guild_id), "clan_id": str(clan_id), "status": "active"}, {"banner_data": 1, "banner_mime": 1})
+    if not clan or not clan.get("banner_data") or clan.get("banner_mime") not in {"image/png", "image/jpeg", "image/webp"}:
+        return "", 404
+    response = Response(bytes(clan["banner_data"]), mimetype=clan["banner_mime"])
     response.headers["Cache-Control"] = "public, max-age=3600"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
@@ -807,6 +838,7 @@ def clans_settings():
         name = " ".join(request.form.get("name", "").split())
         description = request.form.get("description", "").strip()
         icon_data, icon_mime = clan_upload_data()
+        banner_data, banner_mime = clan_upload_banner_data()
         if clan is None or not 3 <= len(name) <= 32 or len(description) > 500:
             raise ValueError
         normalized_name = name.casefold()
@@ -818,7 +850,7 @@ def clans_settings():
         }):
             raise ValueError
     except (TypeError, ValueError) as exc:
-        error = str(exc) if str(exc) in {"icon_size", "icon_type"} else "clan_settings"
+        error = str(exc) if str(exc) in {"icon_size", "icon_type", "banner_size", "banner_type"} else "clan_settings"
         return redirect(url_for("clans_page", guild=request.form.get("guild_id", ""), error=error))
     update = {
         "name": name,
@@ -828,6 +860,8 @@ def clans_settings():
     }
     if icon_data is not None:
         update.update({"icon_data": icon_data, "icon_mime": icon_mime})
+    if banner_data is not None:
+        update.update({"banner_data": banner_data, "banner_mime": banner_mime})
     clans.update_one({"guild_id": guild_id, "clan_id": clan["clan_id"]}, {"$set": update})
     return redirect(url_for("clans_page", guild=guild_id, saved="clan_updated"))
 
@@ -1181,6 +1215,138 @@ def inventory_remove():
     return redirect(url_for("inventory_page", removed="1"))
 
 
+# Standalone survey portal; deliberately omitted from dashboard navigation.
+@app.get("/survey")
+def survey_page():
+    user = session.get("discord_user")
+    available_guilds = []
+    if user:
+        joined_ids = {str(item.get("id")) for item in session.get("discord_guilds", [])}
+        available_guilds = [item for item in bot_guilds() if str(item.get("id")) in joined_ids]
+    banner = site_assets.find_one({"_id": "survey_banner"}, {"mime": 1})
+    return render_template(
+        "survey.html", user=user, guilds=available_guilds,
+        banner_url=url_for("survey_banner_asset") if banner and banner.get("mime") else None,
+        csrf_token=_csrf_token(), error=request.args.get("error"),
+        saved=request.args.get("saved"), reward=SURVEY_REWARD_CANDY,
+    )
+
+
+@app.get("/survey/login")
+def survey_login():
+    if session.get("discord_user"):
+        return redirect(url_for("survey_page"))
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not OAUTH2_REDIRECT_URI:
+        return "Discord OAuth2 is not configured on this deployment.", 503
+    try:
+        state = _create_oauth_transaction("survey")
+    except PyMongoError:
+        log.exception("Could not create survey OAuth transaction")
+        return "Discord OAuth2 is temporarily unavailable. Please try again.", 503
+    params = {"client_id": DISCORD_CLIENT_ID, "redirect_uri": OAUTH2_REDIRECT_URI,
+              "response_type": "code", "scope": "identify guilds", "state": state}
+    return redirect("https://discord.com/oauth2/authorize?" + urlencode(params))
+
+
+@app.get("/survey/banner")
+def survey_banner_asset():
+    asset = site_assets.find_one({"_id": "survey_banner"}, {"data": 1, "mime": 1})
+    if not asset or not asset.get("data") or asset.get("mime") not in {"image/png", "image/jpeg", "image/webp"}:
+        return "", 404
+    response = Response(bytes(asset["data"]), mimetype=asset["mime"])
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.post("/survey/submit")
+def survey_submit():
+    user = session.get("discord_user")
+    if not user:
+        return redirect(url_for("survey_login"))
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("survey_page", error="expired"))
+    try:
+        guild_id, rating = int(request.form.get("guild_id", "")), int(request.form.get("rating", ""))
+    except (TypeError, ValueError):
+        return redirect(url_for("survey_page", error="invalid"))
+    joined_ids = {str(item.get("id")) for item in session.get("discord_guilds", [])}
+    bot = BOT.get("instance")
+    guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+    if str(guild_id) not in joined_ids or guild is None or get_bot_member(guild_id, user["id"]) is None:
+        return redirect(url_for("survey_page", error="guild"))
+    if rating not in range(1, 6):
+        return redirect(url_for("survey_page", error="invalid"))
+    experience = request.form.get("experience", "").strip()
+    suggestions = request.form.get("suggestions", "").strip()
+    features = request.form.get("features", "").strip()
+    if not experience or any(len(value) > 2000 for value in (experience, suggestions, features)):
+        return redirect(url_for("survey_page", error="answers"))
+    username = str(user.get("global_name") or user.get("username") or "Discord member")[:100]
+    submission = {
+        "_id": f"{guild_id}:{int(user['id'])}", "guild_id": guild_id, "user_id": int(user["id"]),
+        "username": username, "rating": rating, "experience": experience,
+        "suggestions": suggestions, "features": features, "reward_candy": SURVEY_REWARD_CANDY,
+        "created_at": datetime.now(timezone.utc),
+    }
+    try:
+        with mongo.start_session() as mongo_session:
+            def save_submission(tx_session):
+                survey_submissions.insert_one(submission, session=tx_session)
+                users.update_one(
+                    {"guild_id": guild_id, "user_id": int(user["id"])},
+                    {"$inc": {"balance": SURVEY_REWARD_CANDY, "candy_earned_total": SURVEY_REWARD_CANDY},
+                     "$set": {"username": username},
+                     "$setOnInsert": {"guild_id": guild_id, "user_id": int(user["id"])}},
+                    upsert=True, session=tx_session,
+                )
+            mongo_session.with_transaction(save_submission)
+    except DuplicateKeyError:
+        return redirect(url_for("survey_page", error="already_submitted"))
+    except PyMongoError:
+        log.exception("Could not save survey or grant survey Candy reward")
+        return redirect(url_for("survey_page", error="save_failed"))
+    log_activity("survey_submitted", user_id=int(user["id"]), username=username, guild_id=guild_id,
+                 amount=SURVEY_REWARD_CANDY, details={"rating": rating, "source": "survey_portal"})
+    return redirect(url_for("survey_page", saved="1"))
+
+
+@app.post("/access-control/survey-banner/save")
+def access_control_survey_banner_save():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("access_control_page", error="banner_csrf"))
+    uploaded = request.files.get("survey_banner")
+    if uploaded is None or not uploaded.filename:
+        return redirect(url_for("access_control_page", error="banner_missing"))
+    data = uploaded.stream.read(SURVEY_BANNER_MAX_BYTES + 1)
+    if not data or len(data) > SURVEY_BANNER_MAX_BYTES:
+        return redirect(url_for("access_control_page", error="banner_size"))
+    mime_type = clan_image_mime(data)
+    if mime_type is None:
+        return redirect(url_for("access_control_page", error="banner_type"))
+    site_assets.update_one({"_id": "survey_banner"},
+        {"$set": {"data": data, "mime": mime_type, "updated_at": datetime.now(timezone.utc),
+                  "updated_by": int(user["id"])}}, upsert=True)
+    return redirect(url_for("access_control_page", saved="survey_banner"))
+
+
+@app.post("/access-control/survey-banner/remove")
+def access_control_survey_banner_remove():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("access_control_page", error="banner_csrf"))
+    site_assets.delete_one({"_id": "survey_banner"})
+    return redirect(url_for("access_control_page", saved="survey_banner_removed"))
+
+
 @app.get("/events")
 def events_page():
     return render_template("events.html")
@@ -1234,6 +1400,8 @@ def oauth_callback():
     if request.args.get("error"):
         if flow == "authorize":
             return redirect(url_for("authorize_page", error="denied"))
+        if flow == "survey":
+            return redirect(url_for("survey_page", error="oauth_denied"))
         return redirect(url_for("profile_page"))
     code = request.args.get("code")
     if not code:
@@ -1270,6 +1438,8 @@ def oauth_callback():
         session["selected_guild_id"] = compact_guilds[0]["id"]
     else:
         session.pop("selected_guild_id", None)
+    if flow == "survey":
+        return redirect(url_for("survey_page"))
     return redirect(url_for("profile_page"))
 
 def _csrf_token():
@@ -4194,6 +4364,8 @@ def access_control_page():
         "access_control.html",
         user=user,
         avatar_url=discord_avatar_url(user),
+        csrf_token=_csrf_token(),
+        survey_banner_configured=bool(site_assets.find_one({"_id": "survey_banner"}, {"_id": 1})),
         allowed=True,
         bot_guilds=bot_guilds,
         slash_commands=slash_commands,
@@ -5585,6 +5757,15 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
 
     button.callback = toggle_leaderboard
     items.extend([ui.Separator(), ui.ActionRow(button)])
+    if clan.get("banner_data") and base_url:
+        banner_url = f"{base_url}/clans/{int(guild.id)}/{quote(str(clan.get('clan_id')), safe='')}/banner"
+        media_gallery = getattr(ui, "MediaGallery", None)
+        media_item = getattr(ui, "MediaGalleryItem", None)
+        if media_gallery and media_item:
+            try:
+                items.append(media_gallery(media_item(media=banner_url)))
+            except (TypeError, ValueError, AttributeError):
+                log.warning("Could not render clan banner in Components V2 for clan %s", clan.get("clan_id"))
     view = ui.LayoutView(timeout=600)
     view.add_item(ui.Container(*items, accent_colour=0x7C3AED))
     return view
