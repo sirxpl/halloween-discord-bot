@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aureolis • Clans</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261014-clan-crop') }}">
   <style>
     .section-main{padding:36px;max-width:1100px}
     .hero,.card{background:rgba(20,15,30,.84);border:1px solid rgba(255,255,255,.08);border-radius:20px}
@@ -23,11 +23,31 @@
     .notice{padding:12px 14px;border-radius:10px;background:#163523;color:#86efac;margin:16px 0}
     .notice.error{background:#3b2020;color:#fca5a5}
     .clan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-    .clan-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18}
-    .clan-banner{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.1)}
-    .clan-head{display:flex;align-items:center;gap:13px}
-    .clan-icon{width:58px;height:58px;object-fit:cover;border-radius:16px;background:#21162d}
-    .clan-placeholder{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:#21162d;font-size:27px}
+    .clan-card{padding:0;overflow:hidden;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18}
+    .clan-card-content{padding:17px}
+    .clan-banner-panel{position:relative;isolation:isolate;min-height:142px;padding:18px;display:flex;align-items:flex-end;box-sizing:border-box;background:linear-gradient(135deg,rgba(124,58,237,.72),rgba(249,115,22,.45)),#21162d;background-position:center;background-size:cover}
+    .clan-banner-panel.has-banner{background-image:linear-gradient(90deg,rgba(10,7,16,.88),rgba(10,7,16,.4)),var(--clan-banner-image)}
+    .clan-banner-panel:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(0deg,rgba(8,6,12,.42),transparent 75%)}
+    .clan-head{display:flex;align-items:center;gap:13px;min-width:0;width:100%}
+    .clan-icon{width:68px;height:68px;flex:none;object-fit:cover;border-radius:18px;background:#21162d;border:2px solid rgba(255,255,255,.28);box-shadow:0 8px 22px rgba(0,0,0,.28)}
+    .clan-placeholder{width:68px;height:68px;flex:none;display:grid;place-items:center;border-radius:18px;background:#21162d;font-size:27px;border:2px solid rgba(255,255,255,.2)}
+    .clan-banner-panel .clan-name-line h2,.clan-banner-panel .clan-name-line h3{margin:0;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65);overflow-wrap:anywhere}
+    .clan-banner-panel .clan-meta{color:#f0eaf7;text-shadow:0 1px 8px rgba(0,0,0,.8)}
+    .clan-banner-panel .clan-verification{background:rgba(10,8,15,.8)}
+    .clan-card-content .clan-desc{margin-top:0}
+    .crop-help{font-size:12px;color:#aaa2b9;margin:6px 0 0}
+    .crop-modal[hidden]{display:none}
+    .crop-modal{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:18px;background:rgba(5,3,9,.82);backdrop-filter:blur(8px)}
+    .crop-dialog{width:min(620px,100%);max-height:calc(100vh - 36px);overflow:auto;padding:20px;border:1px solid rgba(255,255,255,.14);border-radius:18px;background:#17111f;box-shadow:0 24px 80px rgba(0,0,0,.5)}
+    .crop-stage{position:relative;width:100%;aspect-ratio:1;max-height:56vh;overflow:hidden;border-radius:12px;background:#09070d;touch-action:none;cursor:grab}
+    .crop-stage.banner{aspect-ratio:3/1}
+    .crop-stage:active{cursor:grabbing}
+    .crop-stage img{position:absolute;max-width:none;max-height:none;user-select:none;-webkit-user-drag:none;pointer-events:none}
+    .crop-controls{display:flex;align-items:center;gap:12px;margin:14px 0}
+    .crop-controls input{flex:1;min-width:0}
+    .crop-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+    .crop-error{color:#fca5a5;font-size:13px;min-height:18px}
+    @media(max-width:600px){.clan-banner-panel{min-height:128px;padding:14px}.clan-icon,.clan-placeholder{width:56px;height:56px;border-radius:15px}.crop-dialog{padding:14px}.crop-stage{max-height:48vh}}
     .clan-head h3{margin:0}
     .clan-name-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .clan-verification{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(10,8,15,.72);color:#e8e3ef;font-size:11px;font-weight:750;white-space:nowrap}
@@ -123,13 +143,15 @@
   {% endif %}
 
   {% if guild and my_clan %}
-  <section class="card">
-    {% if my_clan.banner_url %}<img class="clan-banner" src="{{ my_clan.banner_url }}" alt="{{ my_clan.name }} banner">{% endif %}
-    <div class="clan-head">
-      {% if my_clan.icon_url %}<img class="clan-icon" src="{{ my_clan.icon_url }}" alt="{{ my_clan.name }} icon">
-      {% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
-      <div><div class="clan-name-line"><h2>{{ my_clan.name }}</h2>{% if my_clan.verification_label %}<span class="clan-verification" title="{{ my_clan.verification_label }}"><img src="{{ my_clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ my_clan.member_count }} member{{ '' if my_clan.member_count == 1 else 's' }} · Shared progress: {{ "{:,}".format(my_clan.earned) }} Candy</div></div>
+  <section class="card" style="padding:0;overflow:hidden">
+    <div class="clan-banner-panel{% if my_clan.banner_url %} has-banner{% endif %}"{% if my_clan.banner_url %} style="--clan-banner-image:url('{{ my_clan.banner_url }}')"{% endif %}>
+      <div class="clan-head">
+        {% if my_clan.icon_url %}<img class="clan-icon" src="{{ my_clan.icon_url }}" alt="{{ my_clan.name }} icon">
+        {% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
+        <div><div class="clan-name-line"><h2>{{ my_clan.name }}</h2>{% if my_clan.verification_label %}<span class="clan-verification" title="{{ my_clan.verification_label }}"><img src="{{ my_clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ my_clan.member_count }} member{{ '' if my_clan.member_count == 1 else 's' }} · Shared progress: {{ "{:,}".format(my_clan.earned) }} Candy</div></div>
+      </div>
     </div>
+    <div class="clan-card-content" style="padding:22px">
     {% if my_clan.description %}<p class="clan-desc">{{ my_clan.description }}</p>{% endif %}
     <div class="progress-group">
       <div class="progress-label"><span>10% shop discount</span><strong>{{ "{:,}".format(my_clan.earned) }} / {{ "{:,}".format(my_clan.discount_threshold) }} 🍬</strong></div>
@@ -171,8 +193,8 @@
       <h3>Manage clan</h3>
       <label class="field-label">Clan name<input class="field" name="name" maxlength="32" minlength="3" value="{{ my_clan.name }}" required></label>
       <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500">{{ my_clan.description }}</textarea></label>
-      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
-      <label class="field-label" style="margin-top:12px">Clan banner (PNG, JPEG, or WebP; up to 4 MB)<input class="field" type="file" name="clan_banner" accept="image/png,image/jpeg,image/webp"></label>
+      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"><span class="crop-help">Choose a square crop and reposition your icon before saving.</span></label>
+      <label class="field-label" style="margin-top:12px">Clan banner (PNG, JPEG, or WebP; up to 4 MB)<input class="field" type="file" name="clan_banner" accept="image/png,image/jpeg,image/webp"><span class="crop-help">Crop to a wide 3:1 banner. The banner fills the clan header instead of sitting beside the icon.</span></label>
       <button class="button" type="submit">Save clan</button>
     </form>
     <form method="post" action="{{ url_for('clans_invite') }}" class="small-form">
@@ -180,6 +202,7 @@
       <button class="button" type="submit">Invite member</button>
     </form>
     {% endif %}
+    </div>
   </section>
   {% elif guild %}
   <section class="card">
@@ -189,7 +212,7 @@
       <input type="hidden" name="guild_id" value="{{ guild.id }}">
       <label class="field-label">Clan name<input class="field" name="name" minlength="3" maxlength="32" required></label>
       <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500"></textarea></label>
-      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
+      <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"><span class="crop-help">Choose a square crop and reposition your icon before requesting approval.</span></label>
       <button class="button" type="submit">Request clan creation</button>
     </form>
   </section>
@@ -237,11 +260,13 @@
     <div class="clan-list">
       {% for clan in clans %}
       <article class="clan-card">
-        <div class="clan-head">
-          {% if clan.banner_url %}<img class="clan-banner" src="{{ clan.banner_url }}" alt="{{ clan.name }} banner" loading="lazy">{% endif %}
-          {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
-          <div><div class="clan-name-line"><h3>{{ clan.name }}</h3>{% if clan.verification_label %}<span class="clan-verification" title="{{ clan.verification_label }}"><img src="{{ clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
+        <div class="clan-banner-panel{% if clan.banner_url %} has-banner{% endif %}"{% if clan.banner_url %} style="--clan-banner-image:url('{{ clan.banner_url }}')"{% endif %}>
+          <div class="clan-head">
+            {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon" loading="lazy">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
+            <div><div class="clan-name-line"><h3>{{ clan.name }}</h3>{% if clan.verification_label %}<span class="clan-verification" title="{{ clan.verification_label }}"><img src="{{ clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
+          </div>
         </div>
+        <div class="clan-card-content">
         {% if clan.description %}<p class="clan-desc">{{ clan.description }}</p>{% endif %}
         <div class="progress-label"><span>Shop discount</span><span>{{ "{:,}".format(clan.earned) }} / {{ "{:,}".format(clan.discount_threshold) }}</span></div>
         <progress value="{{ clan.earned if clan.discount_threshold else 1 }}" max="{{ clan.discount_threshold or 1 }}"></progress>
@@ -252,25 +277,186 @@
           <input type="hidden" name="guild_id" value="{{ guild.id }}"><button class="button" type="submit">Request to join</button>
         </form>
         {% elif clan.clan_id in pending_join_clan_ids %}<div class="muted" style="margin-top:12px">Join request pending approval.</div>{% endif %}
+        </div>
       </article>
       {% else %}<p class="muted">No clans have been approved for this server yet.</p>{% endfor %}
     </div>
   </section>
   {% endif %}
 </main>
+<div class="crop-modal" id="clan-crop-modal" hidden>
+  <section class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title">
+    <h2 id="crop-title" style="margin-top:0">Crop clan image</h2>
+    <p class="muted" id="crop-description">Drag the image to reposition it. Use zoom to adjust the crop.</p>
+    <div class="crop-stage" id="crop-stage"><img id="crop-image" alt="Image crop preview"></div>
+    <div class="crop-controls"><label for="crop-zoom">Zoom</label><input id="crop-zoom" type="range" min="1" max="3" step="0.01" value="1"></div>
+    <p class="crop-error" id="crop-error" role="status" aria-live="polite"></p>
+    <div class="crop-actions"><button class="button alt" type="button" id="crop-cancel">Cancel</button><button class="button" type="button" id="crop-apply">Use crop</button></div>
+  </section>
+</div>
 <script>
 const reviewId = {{ review_id|tojson }};
 if (reviewId) document.getElementById(`review-${reviewId}`)?.scrollIntoView({ block: "center" });
 
-document.querySelectorAll('input[type="file"][name="clan_icon"]').forEach((input) => {
+document.querySelectorAll('input[type="file"][name="clan_icon"],input[type="file"][name="clan_banner"]').forEach((input) => {
   input.addEventListener("change", () => {
-    if (input.files[0] && input.files[0].size > 2 * 1024 * 1024) {
-      input.setCustomValidity("Clan icons must be no larger than 2 MB.");
-    } else {
-      input.setCustomValidity("");
-    }
+    const file = input.files[0];
+    const maxBytes = input.name === "clan_icon" ? 2 * 1024 * 1024 : 4 * 1024 * 1024;
+    input.setCustomValidity(file && file.size > maxBytes
+      ? (input.name === "clan_icon" ? "Clan icons must be no larger than 2 MB." : "Clan banners must be no larger than 4 MB.")
+      : "");
   });
 });
+
+(() => {
+  const modal = document.getElementById("clan-crop-modal");
+  const stage = document.getElementById("crop-stage");
+  const image = document.getElementById("crop-image");
+  const zoom = document.getElementById("crop-zoom");
+  const title = document.getElementById("crop-title");
+  const description = document.getElementById("crop-description");
+  const error = document.getElementById("crop-error");
+  const apply = document.getElementById("crop-apply");
+  const cancel = document.getElementById("crop-cancel");
+  let activeInput = null, activeFile = null, objectUrl = null, ratio = 1;
+  let scale = 1, baseScale = 1, offsetX = 0, offsetY = 0, stageW = 0, stageH = 0;
+  let dragging = false, pointerX = 0, pointerY = 0;
+
+  function constrain() {
+    const w = image.naturalWidth * scale, h = image.naturalHeight * scale;
+    offsetX = Math.min(0, Math.max(stageW - w, offsetX));
+    offsetY = Math.min(0, Math.max(stageH - h, offsetY));
+  }
+  function paint() {
+    image.style.width = (image.naturalWidth * scale) + "px";
+    image.style.height = (image.naturalHeight * scale) + "px";
+    image.style.left = offsetX + "px";
+    image.style.top = offsetY + "px";
+  }
+  function fit() {
+    const rect = stage.getBoundingClientRect();
+    stageW = rect.width; stageH = rect.height;
+    baseScale = Math.max(stageW / image.naturalWidth, stageH / image.naturalHeight);
+    scale = baseScale;
+    offsetX = (stageW - image.naturalWidth * scale) / 2;
+    offsetY = (stageH - image.naturalHeight * scale) / 2;
+    zoom.value = "1";
+    paint();
+  }
+  function close(resetInput) {
+    modal.hidden = true;
+    if (resetInput && activeInput) {
+      activeInput.value = "";
+      activeInput.dataset.cropped = "";
+      activeInput.setCustomValidity("");
+    }
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+    activeInput = null;
+    activeFile = null;
+  }
+  function open(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      input.setCustomValidity("Choose a valid image file.");
+      input.reportValidity();
+      input.value = "";
+      return;
+    }
+    if (file.size > (input.name === "clan_icon" ? 2 : 4) * 1024 * 1024) {
+      input.setCustomValidity(input.name === "clan_icon" ? "Clan icons must be no larger than 2 MB." : "Clan banners must be no larger than 4 MB.");
+      input.reportValidity();
+      input.value = "";
+      return;
+    }
+    activeInput = input;
+    activeFile = file;
+    ratio = input.name === "clan_icon" ? 1 : 3;
+    title.textContent = input.name === "clan_icon" ? "Crop clan profile picture" : "Crop clan banner";
+    description.textContent = ratio === 1
+      ? "Drag to position the square crop. The saved icon will fit neatly beside the clan name."
+      : "Drag to position the wide 3:1 crop. This image will fill the clan header.";
+    stage.classList.toggle("banner", ratio === 3);
+    error.textContent = "";
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      modal.hidden = false;
+      requestAnimationFrame(fit);
+    };
+    image.onerror = () => { error.textContent = "That image could not be opened. Please choose another file."; };
+    image.src = objectUrl;
+  }
+  document.querySelectorAll('input[type="file"][name="clan_icon"],input[type="file"][name="clan_banner"]').forEach(input => {
+    input.addEventListener("change", () => {
+      input.dataset.cropped = "";
+      input.setCustomValidity("");
+      if (input.files && input.files[0]) open(input);
+    });
+    input.closest("form")?.addEventListener("submit", event => {
+      if (input.files && input.files[0] && input.dataset.cropped !== "true") {
+        event.preventDefault();
+        open(input);
+      }
+    });
+  });
+  stage.addEventListener("pointerdown", event => {
+    dragging = true; pointerX = event.clientX; pointerY = event.clientY;
+    stage.setPointerCapture(event.pointerId);
+  });
+  stage.addEventListener("pointermove", event => {
+    if (!dragging) return;
+    offsetX += event.clientX - pointerX; offsetY += event.clientY - pointerY;
+    pointerX = event.clientX; pointerY = event.clientY;
+    constrain(); paint();
+  });
+  stage.addEventListener("pointerup", () => { dragging = false; });
+  stage.addEventListener("pointercancel", () => { dragging = false; });
+  zoom.addEventListener("input", () => {
+    if (!activeFile || !image.naturalWidth) return;
+    const centerX = stageW / 2, centerY = stageH / 2;
+    const oldScale = scale;
+    scale = baseScale * Number(zoom.value);
+    offsetX = centerX - (centerX - offsetX) * (scale / oldScale);
+    offsetY = centerY - (centerY - offsetY) * (scale / oldScale);
+    constrain(); paint();
+  });
+  cancel.addEventListener("click", () => close(true));
+  modal.addEventListener("click", event => { if (event.target === modal) close(true); });
+  document.addEventListener("keydown", event => { if (event.key === "Escape" && !modal.hidden) close(true); });
+  apply.addEventListener("click", () => {
+    if (!activeInput || !activeFile || !image.naturalWidth) return;
+    const sourceX = Math.max(0, -offsetX / scale);
+    const sourceY = Math.max(0, -offsetY / scale);
+    const sourceW = stageW / scale;
+    const sourceH = stageH / scale;
+    const canvas = document.createElement("canvas");
+    canvas.width = ratio === 1 ? 512 : 1200;
+    canvas.height = ratio === 1 ? 512 : 400;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(image, sourceX, sourceY, sourceW, sourceH, 0, 0, canvas.width, canvas.height);
+    apply.disabled = true;
+    apply.textContent = "Preparing…";
+    canvas.toBlob(blob => {
+      apply.disabled = false;
+      apply.textContent = "Use crop";
+      if (!blob) { error.textContent = "Could not create the cropped image. Please try again."; return; }
+      const maxBytes = ratio === 1 ? 2 * 1024 * 1024 : 4 * 1024 * 1024;
+      if (blob.size > maxBytes) {
+        error.textContent = "The cropped image is still too large. Try a simpler image or a smaller crop.";
+        return;
+      }
+      const cropped = new File([blob], ratio === 1 ? "clan-icon-cropped.png" : "clan-banner-cropped.png", {type:"image/png",lastModified:Date.now()});
+      const transfer = new DataTransfer();
+      transfer.items.add(cropped);
+      activeInput.files = transfer.files;
+      activeInput.dataset.cropped = "true";
+      activeInput.setCustomValidity("");
+      close(false);
+    }, "image/png");
+  });
+})();
 </script>
 </body>
 </html>
