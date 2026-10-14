@@ -5825,15 +5825,33 @@ def clan_command_view(guild, clan, progress, members, owner_id, show_leaderboard
 
     button.callback = toggle_leaderboard
     items.extend([ui.Separator(), ui.ActionRow(button)])
-    if clan.get("banner_data") and base_url:
-        banner_url = f"{base_url}/clans/{int(guild.id)}/{quote(str(clan.get('clan_id')), safe='')}/banner"
-        media_gallery = getattr(ui, "MediaGallery", None)
-        media_item = getattr(ui, "MediaGalleryItem", None)
-        if media_gallery and media_item:
-            try:
-                items.append(media_gallery(media_item(media=banner_url)))
-            except (TypeError, ValueError, AttributeError):
-                log.warning("Could not render clan banner in Components V2 for clan %s", clan.get("clan_id"))
+    if clan.get("banner_data"):
+        if not base_url:
+            log.warning(
+                "Clan %s has a banner but PUBLIC_BASE_URL is not configured; "
+                "the banner cannot be shown in the /clan Components V2 card.",
+                clan.get("clan_id"),
+            )
+        else:
+            banner_url = f"{base_url}/clans/{int(guild.id)}/{quote(str(clan.get('clan_id')), safe='')}/banner"
+            media_gallery = getattr(ui, "MediaGallery", None)
+            # In discord.py, MediaGalleryItem is exported from discord, not discord.ui.
+            media_item = getattr(discord, "MediaGalleryItem", None)
+            if media_gallery and media_item:
+                try:
+                    items.append(media_gallery(media_item(media=banner_url)))
+                except (TypeError, ValueError, AttributeError):
+                    log.warning(
+                        "Could not render clan banner in Components V2 for clan %s",
+                        clan.get("clan_id"),
+                        exc_info=True,
+                    )
+            else:
+                log.warning(
+                    "This discord.py build does not expose Components V2 media gallery support; "
+                    "cannot render clan banner for clan %s.",
+                    clan.get("clan_id"),
+                )
     view = ui.LayoutView(timeout=600)
     view.add_item(ui.Container(*items, accent_colour=0x7C3AED))
     return view
