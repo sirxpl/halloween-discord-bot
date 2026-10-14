@@ -23,8 +23,8 @@
     .notice{padding:12px 14px;border-radius:10px;background:#163523;color:#86efac;margin:16px 0}
     .notice.error{background:#3b2020;color:#fca5a5}
     .clan-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-    .clan-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18}
-    .clan-banner{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.1)}
+    .clan-card{padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#100c18;min-width:0}
+    .clan-banner{display:block;width:100%;height:clamp(120px,20vw,220px);object-fit:cover;border-radius:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.1)}
     .clan-head{display:flex;align-items:center;gap:13px}
     .clan-icon{width:58px;height:58px;object-fit:cover;border-radius:16px;background:#21162d}
     .clan-placeholder{width:58px;height:58px;display:grid;place-items:center;border-radius:16px;background:#21162d;font-size:27px}
@@ -190,6 +190,7 @@
       <label class="field-label">Clan name<input class="field" name="name" minlength="3" maxlength="32" required></label>
       <label class="field-label" style="margin-top:12px">Description<textarea class="field" name="description" maxlength="500"></textarea></label>
       <label class="field-label" style="margin-top:12px">Custom clan icon (PNG, JPEG, or WebP; up to 2 MB)<input class="field" type="file" name="clan_icon" accept="image/png,image/jpeg,image/webp"></label>
+      <label class="field-label" style="margin-top:12px">Clan banner (PNG, JPEG, or WebP; up to 4 MB)<input class="field" type="file" name="clan_banner" accept="image/png,image/jpeg,image/webp"></label>
       <button class="button" type="submit">Request clan creation</button>
     </form>
   </section>
@@ -237,8 +238,8 @@
     <div class="clan-list">
       {% for clan in clans %}
       <article class="clan-card">
+        {% if clan.banner_url %}<img class="clan-banner" src="{{ clan.banner_url }}" alt="{{ clan.name }} banner" loading="lazy">{% endif %}
         <div class="clan-head">
-          {% if clan.banner_url %}<img class="clan-banner" src="{{ clan.banner_url }}" alt="{{ clan.name }} banner" loading="lazy">{% endif %}
           {% if clan.icon_url %}<img class="clan-icon" src="{{ clan.icon_url }}" alt="{{ clan.name }} icon">{% else %}<div class="clan-placeholder" aria-hidden="true">🏰</div>{% endif %}
           <div><div class="clan-name-line"><h3>{{ clan.name }}</h3>{% if clan.verification_label %}<span class="clan-verification" title="{{ clan.verification_label }}"><img src="{{ clan.verification_icon_url }}" alt=""></span>{% endif %}</div><div class="clan-meta">{{ clan.member_count }} members · {{ "{:,}".format(clan.earned) }} Candy earned since joining</div></div>
         </div>
@@ -262,10 +263,12 @@
 const reviewId = {{ review_id|tojson }};
 if (reviewId) document.getElementById(`review-${reviewId}`)?.scrollIntoView({ block: "center" });
 
-document.querySelectorAll('input[type="file"][name="clan_icon"]').forEach((input) => {
+document.querySelectorAll('input[type="file"][name="clan_icon"], input[type="file"][name="clan_banner"]').forEach((input) => {
   input.addEventListener("change", () => {
-    if (input.files[0] && input.files[0].size > 2 * 1024 * 1024) {
-      input.setCustomValidity("Clan icons must be no larger than 2 MB.");
+    const isBanner = input.name === "clan_banner";
+    const maxBytes = isBanner ? 4 * 1024 * 1024 : 2 * 1024 * 1024;
+    if (input.files[0] && input.files[0].size > maxBytes) {
+      input.setCustomValidity(`Clan ${isBanner ? "banners" : "icons"} must be no larger than ${isBanner ? "4" : "2"} MB.`);
     } else {
       input.setCustomValidity("");
     }
