@@ -1259,6 +1259,70 @@ def survey_banner_asset():
     return response
 
 
+def survey_submission_notification_view(submission, guild_name, avatar_url=None):
+    """Components V2 private notification containing the full survey submission and submitter identity."""
+    ui = discord.ui
+    user_id = int(submission["user_id"])
+    created_at = submission.get("created_at") or now_utc()
+    timestamp = int(created_at.timestamp()) if hasattr(created_at, "timestamp") else int(now_utc().timestamp())
+
+    def safe(value):
+        value = str(value or "").strip()
+        return discord.utils.escape_markdown(value) if value else "—"
+
+    header = (
+        "## 📝 New Survey Submission\n"
+        f"**Discord username:** {safe(submission.get('discord_username') or submission.get('username'))}\n"
+        f"**Display name:** {safe(submission.get('display_name') or submission.get('username'))}\n"
+        f"**Discord mention:** <@{user_id}>\n"
+        f"**User ID:** `{user_id}`\n"
+        f"**User profile:** https://discord.com/users/{user_id}\n"
+        f"**Server:** {safe(guild_name)}\n"
+        f"**Server ID:** `{int(submission['guild_id'])}`\n"
+        f"**Submitted:** <t:{timestamp}:F> (<t:{timestamp}:R>)\n"
+        f"**Overall rating:** {int(submission.get('rating', 0))}/5 ⭐\n"
+        f"**Survey reward:** {int(submission.get('reward_candy', SURVEY_REWARD_CANDY)):,} 🍬"
+    )
+    items = [
+        ui.Section(ui.TextDisplay(header), accessory=ui.Thumbnail(avatar_url))
+        if avatar_url else ui.TextDisplay(header),
+        ui.Separator(),
+        ui.TextDisplay("### 💬 How was their experience?\n" + safe(submission.get("experience"))),
+        ui.Separator(),
+        ui.TextDisplay("### 💡 Suggestions\n" + safe(submission.get("suggestions"))),
+        ui.Separator(),
+        ui.TextDisplay("### ✨ Features they'd like\n" + safe(submission.get("features"))),
+        ui.Separator(),
+        ui.TextDisplay("-# Private survey notification • Replies are not sent back to the respondent."),
+    ]
+    view = ui.LayoutView(timeout=None)
+    view.add_item(ui.Container(*items, accent_colour=0x7C3AED))
+    return view
+
+
+def notify_survey_submission(submission, guild_name, avatar_url=None):
+    """Best-effort DM to the configured survey notification recipient; never rolls back a saved survey."""
+    recipient_id = int(os.getenv("SURVEY_NOTIFICATION_USER_ID", "777341204047331348"))
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed() or not bot.is_ready():
+        log.warning("Survey was saved, but the notification DM could not be sent because the bot is offline.")
+        return False
+
+    async def send():
+        recipient = bot.get_user(recipient_id) or await bot.fetch_user(recipient_id)
+        await recipient.send(
+            view=survey_submission_notification_view(submission, guild_name, avatar_url),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    try:
+        _run_on_bot_loop(bot, send(), 12)
+        return True
+    except Exception:
+        log.warning("Survey was saved, but its notification DM failed for recipient %s.", recipient_id, exc_info=True)
+        return False
+
+
 @app.post("/survey/submit")
 def survey_submit():
     user = session.get("discord_user")
@@ -1286,7 +1350,9 @@ def survey_submit():
     username = str(user.get("global_name") or user.get("username") or "Discord member")[:100]
     submission = {
         "_id": f"{guild_id}:{int(user['id'])}", "guild_id": guild_id, "user_id": int(user["id"]),
-        "username": username, "rating": rating, "experience": experience,
+        "username": username, "discord_username": str(user.get("username") or username)[:100],
+        "display_name": str(user.get("global_name") or user.get("username") or "Discord member")[:100],
+        "rating": rating, "experience": experience,
         "suggestions": suggestions, "features": features, "reward_candy": SURVEY_REWARD_CANDY,
         "created_at": datetime.now(timezone.utc),
     }
@@ -1309,6 +1375,8 @@ def survey_submit():
         return redirect(url_for("survey_page", error="save_failed"))
     log_activity("survey_submitted", user_id=int(user["id"]), username=username, guild_id=guild_id,
                  amount=SURVEY_REWARD_CANDY, details={"rating": rating, "source": "survey_portal"})
+    avatar_url = discord_avatar_url(user)
+    notify_survey_submission(submission, guild.name, avatar_url)
     return redirect(url_for("survey_page", saved="1"))
 
 
