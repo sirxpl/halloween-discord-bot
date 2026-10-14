@@ -1272,7 +1272,8 @@ def survey_submission_notification_view(submission, guild_name, avatar_url=None)
 
     header = (
         "## 📝 New Survey Submission\n"
-        f"**Username:** {safe(submission.get('username'))}\n"
+        f"**Discord username:** {safe(submission.get('discord_username') or submission.get('username'))}\n"
+        f"**Display name:** {safe(submission.get('display_name') or submission.get('username'))}\n"
         f"**Discord mention:** <@{user_id}>\n"
         f"**User ID:** `{user_id}`\n"
         f"**User profile:** https://discord.com/users/{user_id}\n"
@@ -1349,7 +1350,9 @@ def survey_submit():
     username = str(user.get("global_name") or user.get("username") or "Discord member")[:100]
     submission = {
         "_id": f"{guild_id}:{int(user['id'])}", "guild_id": guild_id, "user_id": int(user["id"]),
-        "username": username, "rating": rating, "experience": experience,
+        "username": username, "discord_username": str(user.get("username") or username)[:100],
+        "display_name": str(user.get("global_name") or user.get("username") or "Discord member")[:100],
+        "rating": rating, "experience": experience,
         "suggestions": suggestions, "features": features, "reward_candy": SURVEY_REWARD_CANDY,
         "created_at": datetime.now(timezone.utc),
     }
