@@ -506,6 +506,7 @@ def clans_create():
         description = request.form.get("description", "").strip()
         normalized_name = name.casefold()
         icon_data, icon_mime = clan_upload_data()
+        banner_data, banner_mime = clan_upload_banner_data()
         if not 3 <= len(name) <= 32 or len(description) > 500:
             raise ValueError("invalid")
         if clans.find_one({"guild_id": guild_id, "normalized_name": normalized_name, "status": "active"}):
@@ -521,7 +522,7 @@ def clans_create():
     except ValueError as exc:
         error = str(exc) if str(exc) in {
             "invalid_guild", "not_member", "already_in_clan", "name_taken", "name_pending",
-            "request_pending", "icon_size", "icon_type",
+            "request_pending", "icon_size", "icon_type", "banner_size", "banner_type",
         } else "invalid"
         return redirect(url_for("clans_page", guild=guild_id_raw, error=error))
 
@@ -536,6 +537,8 @@ def clans_create():
         "description": description,
         "icon_data": icon_data,
         "icon_mime": icon_mime,
+        "banner_data": banner_data,
+        "banner_mime": banner_mime,
         "status": "pending",
         "created_at": now_utc(),
     })
@@ -592,6 +595,8 @@ def clans_creation_decision(request_id):
         "owner_id": owner_id,
         "icon_data": creation.get("icon_data"),
         "icon_mime": creation.get("icon_mime"),
+        "banner_data": creation.get("banner_data"),
+        "banner_mime": creation.get("banner_mime"),
         "status": "active",
         "created_at": now_utc(),
     }
