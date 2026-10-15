@@ -73,6 +73,7 @@ clan_join_requests = db["clan_join_requests"]
 clan_invites = db["clan_invites"]
 clan_config = db["clan_config"]
 event_announcement_settings = db["event_announcement_settings"]
+event_records = db["event_records"]
 
 # Bump this whenever templates/terms.html or templates/privacy.html change in a way people
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
@@ -1423,7 +1424,84 @@ def access_control_survey_banner_remove():
 
 @app.get("/events")
 def events_page():
-    return render_template("events.html")
+    now = now_utc()
+    records = list(event_records.find({}).sort("created_at", -1).limit(100))
+    for event in records:
+        event["id"] = str(event.get("_id", ""))
+        event["title"] = str(event.get("title", "Untitled event"))
+        event["description"] = str(event.get("description", ""))
+        event["date_time"] = str(event.get("date_time", "Time to be announced"))
+        event["location"] = str(event.get("location", ""))
+        event["notes"] = str(event.get("notes", ""))
+        event["status"] = event.get("status", "upcoming")
+        event["status_label"] = {
+            "upcoming": "Upcoming", "ongoing": "Ongoing",
+            "ended": "Ended", "cancelled": "Cancelled",
+        }.get(event["status"], "Upcoming")
+    user = session.get("discord_user")
+    admin = bool(user and is_admin(user.get("id", 0)))
+    return render_template(
+        "events.html",
+        events=records,
+        is_event_admin=admin,
+        csrf_token=session.get("csrf_token", ""),
+    )
+
+
+@app.post("/events/manage/status")
+def event_manage_status():
+    user = session.get("discord_user")
+    if not user or not is_admin(user.get("id", 0)):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("events_page", error="csrf"))
+    event_id = request.form.get("event_id", "").strip()
+    status = request.form.get("status", "").strip().lower()
+    if status not in {"upcoming", "ongoing", "ended", "cancelled"}:
+        return redirect(url_for("events_page", error="status"))
+    try:
+        from bson import ObjectId
+        result = event_records.update_one(
+            {"_id": ObjectId(event_id)},
+            {"$set": {"status": status, "updated_at": now_utc(), "updated_by": int(user["id"])}},
+        )
+    except Exception:
+        result = None
+    return redirect(url_for("events_page", saved="status" if result and result.modified_count + result.matched_count else "missing"))
+
+
+@app.post("/events/manage/remove")
+def event_manage_remove():
+    user = session.get("discord_user")
+    if not user or not is_admin(user.get("id", 0)):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("events_page", error="csrf"))
+    event_id = request.form.get("event_id", "").strip()
+    try:
+        from bson import ObjectId
+        record = event_records.find_one({"_id": ObjectId(event_id)})
+    except Exception:
+        record = None
+    if not record:
+        return redirect(url_for("events_page", error="missing"))
+    # Remove the stored event and best-effort delete the matching Discord announcement.
+    event_records.delete_one({"_id": record["_id"]})
+    bot = BOT.get("instance")
+    if bot and not bot.is_closed() and record.get("channel_id") and record.get("message_id"):
+        async def delete_announcement():
+            try:
+                channel = bot.get_channel(int(record["channel_id"]))
+                if channel is None:
+                    channel = await bot.fetch_channel(int(record["channel_id"]))
+                message = await channel.fetch_message(int(record["message_id"]))
+                await message.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+                log.warning("Event record removed; Discord announcement could not be deleted.")
+        bot.loop.create_task(delete_announcement())
+    return redirect(url_for("events_page", saved="removed"))
 
 
 def _create_oauth_transaction(flow, consent=None):
