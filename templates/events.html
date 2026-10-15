@@ -18,12 +18,45 @@
     <p>Keep track of the Halloween activities planned for Aureolis. This is the central event calendar for the seasonal bot experience.</p>
   </section>
   <section class="grid">
-    <article class="card"><span class="date">NOW • HALLOWEEN SEASON</span><h2>🍬 Candy Hunt</h2><p>Earn Candy through <strong>/daily</strong>, <strong>/trickortreat</strong>, and the server leaderboard.</p><span class="status">● Active</span></article>
-    <article class="card"><span class="date">SEASONAL</span><h2>👻 Halloween Quests</h2><p>Complete spooky challenges and work toward the event's reward milestones.</p><span class="status">● Active</span></article>
-    <article class="card"><span class="date">COMING SOON</span><h2>🎃 Community Event</h2><p>A larger community activity can be added here with a start time, end time, and participation rewards.</p><span class="status">● Planned</span></article>
-    <article class="card"><span class="date">COMING SOON</span><h2>🏆 Final Candy Rush</h2><p>A final seasonal push can close out the Halloween event before the season ends.</p><span class="status">● Planned</span></article>
+    {% for event in events %}
+    <article class="card">
+      <span class="date">{{ event.status_label|upper }}</span>
+      <h2>{{ event.title }}</h2>
+      {% if event.location %}<p><strong>Location:</strong> {{ event.location }}</p>{% endif %}
+      <p>{{ event.description }}</p>
+      <p><strong>When:</strong> {{ event.date_time }}</p>
+      {% if event.notes %}<p><strong>Notes:</strong> {{ event.notes }}</p>{% endif %}
+      <span class="status">● {{ event.status_label }}</span>
+      {% if is_event_admin %}
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid #302342">
+        <form method="post" action="{{ url_for('event_manage_status') }}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="event_id" value="{{ event.id }}">
+          <label for="status-{{ event.id }}" class="muted">Status</label>
+          <select id="status-{{ event.id }}" name="status" style="flex:1;min-width:120px;padding:9px;border-radius:8px;background:#21172f;color:#fff;border:1px solid #49375f">
+            {% for value, label in [('upcoming','Upcoming'),('ongoing','Ongoing'),('ended','Ended'),('cancelled','Cancelled')] %}
+            <option value="{{ value }}" {% if event.status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button class="button" type="submit" style="border:0;cursor:pointer">Save status</button>
+        </form>
+        <form method="post" action="{{ url_for('event_manage_remove') }}" style="margin-top:10px" onsubmit="return confirm('Permanently remove this event and try to delete its Discord announcement? This cannot be undone.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="event_id" value="{{ event.id }}">
+          <button type="submit" style="background:#7f1d1d;color:#fff;border:1px solid #991b1b;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer">Remove event</button>
+        </form>
+      </div>
+      {% endif %}
+    </article>
+    {% else %}
+    <article class="card">
+      <span class="date">NO EVENTS YET</span>
+      <h2>📅 Nothing scheduled</h2>
+      <p>When an admin publishes an event with <strong>/event-announcement</strong>, it will appear here.</p>
+    </article>
+    {% endfor %}
   </section>
-  <div class="note">📢 Panel admins can publish an upcoming event with <strong>/event-announcement</strong>. Configure its destination in Dashboard → Access Control → Event Announcements. Scheduled auto-posting, reminders, participation tracking, and automatic rewards are not enabled yet.</div>
+  <div class="note">📢 Panel admins can publish events with <strong>/event-announcement</strong>. Authorized panel admins can update event status or remove an event here. Scheduled auto-posting and reminders are not enabled yet.</div>
   <div class="cta"><a class="button" href="https://discord.gg/aureolis">🎃 Join Aureolis</a></div>
   <div class="footer">Aureolis Halloween Bot • Events</div>
 </main>
