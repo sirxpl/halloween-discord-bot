@@ -1462,13 +1462,59 @@ def event_manage_status():
         return redirect(url_for("events_page", error="status"))
     try:
         from bson import ObjectId
-        result = event_records.update_one(
-            {"_id": ObjectId(event_id)},
+        record = event_records.find_one({"_id": ObjectId(event_id)})
+        if not record:
+            return redirect(url_for("events_page", error="missing"))
+        event_records.update_one(
+            {"_id": record["_id"]},
             {"$set": {"status": status, "updated_at": now_utc(), "updated_by": int(user["id"])}},
         )
+        bot = BOT.get("instance")
+        if bot and not bot.is_closed() and record.get("channel_id") and record.get("message_id"):
+            async def update_announcement():
+                status_labels = {
+                    "upcoming": "🟢 Upcoming", "ongoing": "🟠 Ongoing",
+                    "ended": "⚫ Ended", "cancelled": "🔴 Cancelled",
+                }
+                updated_view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(140, 72, 226))
+                if record.get("image_url"):
+                    container.add_item(discord.ui.MediaGallery(
+                        discord.MediaGalleryItem(
+                            media=record["image_url"],
+                            description=f"{record.get('title', 'Event')} event image",
+                        )
+                    ))
+                    container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
+                container.add_item(discord.ui.TextDisplay(content=f"## {record.get('title', 'Untitled event')}"))
+                if record.get("location"):
+                    container.add_item(discord.ui.TextDisplay(content=f"**Location:** {record['location']}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**Description:** {record.get('description', '')}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**When:** {record.get('date_time', 'Time to be announced')}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**Status:** {status_labels[status]}"))
+                if record.get("notes"):
+                    container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {record['notes']}"))
+                container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                container.add_item(discord.ui.ActionRow(discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label="View Event",
+                    url="https://halloween-discord-bot-production.up.railway.app/events",
+                )))
+                updated_view.add_item(container)
+                try:
+                    channel = bot.get_channel(int(record["channel_id"]))
+                    if channel is None:
+                        channel = await bot.fetch_channel(int(record["channel_id"]))
+                    message = await channel.fetch_message(int(record["message_id"]))
+                    await message.edit(view=updated_view)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+                    log.warning("Event status saved, but the original Discord announcement could not be updated.")
+            asyncio.run_coroutine_threadsafe(update_announcement(), bot.loop)
     except Exception:
-        result = None
-    return redirect(url_for("events_page", saved="status" if result and result.modified_count + result.matched_count else "missing"))
+        log.exception("Could not update event status")
+        return redirect(url_for("events_page", error="missing"))
+    return redirect(url_for("events_page", saved="status"))
 
 
 @app.post("/events/manage/remove")
@@ -1500,7 +1546,7 @@ def event_manage_remove():
                 await message.delete()
             except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
                 log.warning("Event record removed; Discord announcement could not be deleted.")
-        bot.loop.create_task(delete_announcement())
+        asyncio.run_coroutine_threadsafe(delete_announcement(), bot.loop)
     return redirect(url_for("events_page", saved="removed"))
 
 
