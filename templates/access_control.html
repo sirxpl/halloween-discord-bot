@@ -140,6 +140,34 @@
     </div>
     <div class="access-card">
       <div class="access-header">
+        <div><h2>📢 Event Announcements</h2><p class="muted">Choose the text channel where <code>/event-announcement</code> will post upcoming event announcements. Panel admins can run the command, and you can include an optional image URL.</p></div>
+        <span class="access-badge">{{ 'Channel configured' if event_announcement_channel_id else 'Not configured' }}</span>
+      </div>
+      {% if request.args.get('saved') == 'event_channel' %}<div class="gl-flash ok">✓ Event announcement channel saved.</div>{% endif %}
+      {% if request.args.get('error') in ['event_csrf', 'event_channel', 'event_permissions'] %}
+      <div class="gl-flash err">{{ {'event_csrf':'Your form expired. Reload Access Control and try again.','event_channel':'Enter a valid text-channel ID from the selected server.','event_permissions':'The bot needs View Channel, Send Messages, and Embed Links in that channel.'}[request.args.get('error')] }}</div>
+      {% endif %}
+      {% if bot_guilds %}
+      <form method="get" action="{{ url_for('access_control_page') }}" style="margin-top:16px">
+        <label class="muted" for="event-announcement-guild">Server</label>
+        <select id="event-announcement-guild" name="boost_guild" class="command-search" style="margin-top:8px" onchange="this.form.submit()">
+          {% for guild in bot_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{{ url_for('access_control_events_save') }}" style="margin-top:16px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
+        <label class="muted" for="event-channel-id">Discord text channel ID</label>
+        <input id="event-channel-id" class="command-search" style="margin-top:8px" name="channel_id" type="text" inputmode="numeric" pattern="[0-9]{15,25}" maxlength="25" placeholder="e.g. 123456789012345678" value="{{ event_announcement_channel_id }}" required>
+        <p class="muted" style="margin-top:8px">Enable Developer Mode in Discord, right-click the target channel, and choose Copy Channel ID. The bot must be able to send messages and embeds there.</p>
+        <button class="command-toggle enabled" type="submit" style="margin-top:12px">Save event channel</button>
+      </form>
+      {% else %}
+      <p class="muted" style="margin-top:18px">The bot must be connected to a Discord server before an event channel can be configured.</p>
+      {% endif %}
+    </div>
+    <div class="access-card">
+      <div class="access-header">
         <div><h2>🏷️ Badges &amp; nickname gradients</h2><p class="muted">Assign a badge to a Discord role or one user ID. A user-specific gradient takes priority over role gradients; among roles, the highest role wins. Badges remain visible when their gradient is disabled.</p></div>
         <span class="access-badge">{{ badge_configs|length }} configured</span>
       </div>

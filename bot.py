@@ -72,6 +72,7 @@ clan_creation_requests = db["clan_creation_requests"]
 clan_join_requests = db["clan_join_requests"]
 clan_invites = db["clan_invites"]
 clan_config = db["clan_config"]
+event_announcement_settings = db["event_announcement_settings"]
 
 # Bump this whenever templates/terms.html or templates/privacy.html change in a way people
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
@@ -4397,6 +4398,10 @@ def access_control_page():
             } for command in bot.tree.get_commands()],
             key=lambda item: item["name"].lower(),
         )
+    event_announcement_config = (
+        event_announcement_settings.find_one({"guild_id": int(selected_boost_guild_id)}) or {}
+        if selected_boost_guild_id.isdigit() else {}
+    )
     saved_daily_boosts = get_daily_boosts(int(selected_boost_guild_id)) if selected_boost_guild_id.isdigit() else []
     give_tax_percent = (
         get_give_tax_percent(int(selected_boost_guild_id))
@@ -4439,6 +4444,7 @@ def access_control_page():
         avatar_url=discord_avatar_url(user),
         csrf_token=_csrf_token(),
         survey_banner_configured=bool(site_assets.find_one({"_id": "survey_banner"}, {"_id": 1})),
+        event_announcement_channel_id=str(event_announcement_config.get("channel_id", "")),
         allowed=True,
         bot_guilds=bot_guilds,
         slash_commands=slash_commands,
@@ -4459,6 +4465,51 @@ def access_control_page():
         give_limit_max_rules=GIVE_LIMIT_MAX_RULES,
         cooldown_units=[(key, label) for key, (label, _) in TRICK_COOLDOWN_UNITS.items()],
     )
+
+
+@app.post("/access-control/events/save")
+def access_control_events_save():
+    user = session.get("discord_user")
+    if not user or not is_admin(user["id"]):
+        return "Forbidden", 403
+
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("access_control_page", error="event_csrf"))
+
+    guild_id_raw = request.form.get("guild_id", "").strip()
+    channel_id_raw = request.form.get("channel_id", "").strip()
+    try:
+        guild_id = int(guild_id_raw)
+        channel_id = int(channel_id_raw)
+    except (TypeError, ValueError):
+        return redirect(url_for("access_control_page", boost_guild=guild_id_raw, error="event_channel"))
+
+    bot = BOT.get("instance")
+    guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
+    channel = bot.get_channel(channel_id) if bot and not bot.is_closed() else None
+    if guild is None or channel is None or getattr(channel, "guild", None) is None or channel.guild.id != guild_id:
+        return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_channel"))
+
+    if not isinstance(channel, (discord.TextChannel)):
+        return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_channel"))
+    bot_member = guild.me
+    if bot_member is None or not channel.permissions_for(bot_member).send_messages:
+        return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_permissions"))
+    if not channel.permissions_for(bot_member).embed_links:
+        return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_permissions"))
+
+    event_announcement_settings.update_one(
+        {"guild_id": guild_id},
+        {"$set": {
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "updated_at": now_utc(),
+            "updated_by": int(user["id"]),
+        }},
+        upsert=True,
+    )
+    return redirect(url_for("access_control_page", boost_guild=guild_id, saved="event_channel"))
 
 
 @app.post("/access-control/badges/save")
@@ -6857,6 +6908,105 @@ class HalloweenBot(commands.Cog):
                 show_leaderboard=True,
             ),
             allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @app_commands.command(
+        name="event-announcement",
+        description="Post an upcoming event announcement to the configured channel (panel admins only).",
+    )
+    @app_commands.describe(
+        title="Short event title",
+        date_time="When the event starts, including timezone (for example: Oct 31 at 7 PM ET)",
+        description="What the event is about",
+        image_url="Optional HTTPS image URL to display in the announcement",
+    )
+    async def event_announcement(
+        self,
+        interaction: discord.Interaction,
+        title: app_commands.Range[str, 1, 100],
+        date_time: app_commands.Range[str, 1, 100],
+        description: app_commands.Range[str, 1, 1500],
+        image_url: Optional[str] = None,
+    ):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "🔒 This command is restricted to Aureolis panel admins.",
+                ephemeral=True,
+            )
+            return
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a Discord server.",
+                ephemeral=True,
+            )
+            return
+
+        config = await db(event_announcement_settings.find_one, {"guild_id": interaction.guild.id})
+        channel_id = config.get("channel_id") if config else None
+        if not channel_id:
+            await interaction.response.send_message(
+                "⚙️ No event announcement channel is configured for this server. An Aureolis panel admin must set it in **Access Control → Event Announcements** first.",
+                ephemeral=True,
+            )
+            return
+
+        channel = self.bot.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(int(channel_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                channel = None
+        if not isinstance(channel, (discord.TextChannel)):
+            await interaction.response.send_message(
+                "⚠️ The configured event channel is unavailable. Please reselect it in Access Control.",
+                ephemeral=True,
+            )
+            return
+        if channel.guild.id != interaction.guild.id:
+            await interaction.response.send_message(
+                "⚠️ The configured event channel belongs to a different server. Please fix it in Access Control.",
+                ephemeral=True,
+            )
+            return
+
+        image_url = (image_url or "").strip()
+        if image_url:
+            parsed_image = urlparse(image_url)
+            if parsed_image.scheme != "https" or not parsed_image.netloc or len(image_url) > 500:
+                await interaction.response.send_message(
+                    "⚠️ The image URL must be a valid HTTPS URL under 500 characters.",
+                    ephemeral=True,
+                )
+                return
+
+        embed = discord.Embed(
+            title=f"🎃 {title.strip()}",
+            description=description.strip(),
+            color=discord.Color.from_rgb(124, 58, 237),
+            timestamp=now_utc(),
+        )
+        embed.add_field(name="📅 When", value=date_time.strip(), inline=False)
+        embed.set_footer(text="Aureolis • Upcoming Event")
+        if image_url:
+            embed.set_image(url=image_url)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            log.exception("Could not post event announcement in channel %s", channel.id)
+            await interaction.followup.send(
+                "❌ I couldn't post there. Check the bot's **View Channel**, **Send Messages**, and **Embed Links** permissions.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"✅ Event announcement posted in {channel.mention}.",
+            ephemeral=True,
         )
 
     @app_commands.command(name="shop", description="Browse the Halloween Candy shop and buy items.")
