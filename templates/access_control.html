@@ -140,7 +140,7 @@
     </div>
     <div class="access-card">
       <div class="access-header">
-        <div><h2>📢 Event Announcements</h2><p class="muted">Choose the text channel where <code>/event-announcement</code> will post upcoming event announcements. Panel admins can run the command, and you can include an optional image URL.</p></div>
+        <div><h2>📢 Event Announcements</h2><p class="muted">Choose the text channel where <code>/event-announcement</code> will post its Components V2 event card. Panel admins can provide the event title, location, description, date/time, optional notes, and an optional image URL.</p></div>
         <span class="access-badge">{{ 'Channel configured' if event_announcement_channel_id else 'Not configured' }}</span>
       </div>
       {% if request.args.get('saved') == 'event_channel' %}<div class="gl-flash ok">✓ Event announcement channel saved.</div>{% endif %}
