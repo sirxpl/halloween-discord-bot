@@ -148,6 +148,12 @@
       <div class="gl-flash err">{{ {'event_csrf':'Your form expired. Reload Access Control and try again.','event_channel':'Enter a valid text-channel ID from the selected server.','event_permissions':'The bot needs View Channel, Send Messages, and Embed Links in that channel.'}[request.args.get('error')] }}</div>
       {% endif %}
       {% if bot_guilds %}
+      <form method="get" action="{{ url_for('access_control_page') }}" style="margin-top:16px">
+        <label class="muted" for="event-announcement-guild">Server</label>
+        <select id="event-announcement-guild" name="boost_guild" class="command-search" style="margin-top:8px" onchange="this.form.submit()">
+          {% for guild in bot_guilds %}<option value="{{ guild.id }}" {% if guild.id|string == boost_guild_id|string %}selected{% endif %}>{{ guild.name }}</option>{% endfor %}
+        </select>
+      </form>
       <form method="post" action="{{ url_for('access_control_events_save') }}" style="margin-top:16px">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="guild_id" value="{{ boost_guild_id }}">
