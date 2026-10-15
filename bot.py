@@ -6918,7 +6918,9 @@ class HalloweenBot(commands.Cog):
         title="Short event title",
         date_time="When the event starts, including timezone (for example: Oct 31 at 7 PM ET)",
         description="What the event is about",
-        image_url="Optional HTTPS image URL to display in the announcement",
+        location="Optional location or event location URL",
+        notes="Optional extra notes",
+        image_url="Optional HTTPS image URL to display at the top",
     )
     async def event_announcement(
         self,
@@ -6926,6 +6928,8 @@ class HalloweenBot(commands.Cog):
         title: app_commands.Range[str, 1, 100],
         date_time: app_commands.Range[str, 1, 100],
         description: app_commands.Range[str, 1, 1500],
+        location: Optional[app_commands.Range[str, 1, 300]] = None,
+        notes: Optional[app_commands.Range[str, 1, 1000]] = None,
         image_url: Optional[str] = None,
     ):
         if not is_admin(interaction.user.id):
@@ -6979,21 +6983,44 @@ class HalloweenBot(commands.Cog):
                 )
                 return
 
-        embed = discord.Embed(
-            title=f"🎃 {title.strip()}",
-            description=description.strip(),
-            color=discord.Color.from_rgb(124, 58, 237),
-            timestamp=now_utc(),
-        )
-        embed.add_field(name="📅 When", value=date_time.strip(), inline=False)
-        embed.set_footer(text="Aureolis • Upcoming Event")
+        # Components V2 layout: media, dividers, text displays, and a link button.
+        # LayoutView replaces the old embed for this message.
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(140, 72, 226))
+
         if image_url:
-            embed.set_image(url=image_url)
+            container.add_item(
+                discord.ui.MediaGallery(
+                    discord.MediaGalleryItem(media=image_url, description=f"{title.strip()} event image")
+                )
+            )
+            container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+
+        container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
+        container.add_item(discord.ui.TextDisplay(content=f"## {title.strip()}"))
+        if location and location.strip():
+            container.add_item(discord.ui.TextDisplay(content=f"**Location:** {location.strip()}"))
+        container.add_item(discord.ui.TextDisplay(content=f"**Description:** {description.strip()}"))
+        container.add_item(discord.ui.TextDisplay(content=f"**When:** {date_time.strip()}"))
+        if notes and notes.strip():
+            container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {notes.strip()}"))
+
+        container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+        container.add_item(
+            discord.ui.ActionRow(
+                discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label="View Event",
+                    url="https://halloween-discord-bot-production.up.railway.app/events",
+                )
+            )
+        )
+        view.add_item(container)
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await channel.send(
-                embed=embed,
+                view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.HTTPException):
