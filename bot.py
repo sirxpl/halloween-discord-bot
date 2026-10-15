@@ -1485,7 +1485,7 @@ def event_manage_status():
                             description=f"{record.get('title', 'Event')} event image",
                         )
                     ))
-                    container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                    container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
                 container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
                 container.add_item(discord.ui.TextDisplay(content=f"## {record.get('title', 'Untitled event')}"))
                 if record.get("location"):
@@ -1495,7 +1495,7 @@ def event_manage_status():
                 container.add_item(discord.ui.TextDisplay(content=f"**Status:** {status_labels[status]}"))
                 if record.get("notes"):
                     container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {record['notes']}"))
-                container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
                 container.add_item(discord.ui.ActionRow(discord.ui.Button(
                     style=discord.ButtonStyle.link,
                     label="View Event",
@@ -7114,7 +7114,7 @@ class HalloweenBot(commands.Cog):
             container.add_item(discord.ui.MediaGallery(
                 discord.MediaGalleryItem(media=image_url, description=f"{title.strip()} event image")
             ))
-            container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+            container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
         container.add_item(discord.ui.TextDisplay(content=f"## {title.strip()}"))
         if location and location.strip():
@@ -7124,7 +7124,7 @@ class HalloweenBot(commands.Cog):
         container.add_item(discord.ui.TextDisplay(content="**Status:** 🟢 Upcoming"))
         if notes and notes.strip():
             container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {notes.strip()}"))
-        container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         container.add_item(discord.ui.ActionRow(discord.ui.Button(
             style=discord.ButtonStyle.link,
             label="View Event",
