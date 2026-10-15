@@ -4491,7 +4491,7 @@ def access_control_events_save():
     if guild is None or channel is None or getattr(channel, "guild", None) is None or channel.guild.id != guild_id:
         return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_channel"))
 
-    if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
+    if not isinstance(channel, (discord.TextChannel)):
         return redirect(url_for("access_control_page", boost_guild=guild_id, error="event_channel"))
     bot_member = guild.me
     if bot_member is None or not channel.permissions_for(bot_member).send_messages:
@@ -6956,7 +6956,7 @@ class HalloweenBot(commands.Cog):
                 channel = await self.bot.fetch_channel(int(channel_id))
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 channel = None
-        if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
+        if not isinstance(channel, (discord.TextChannel)):
             await interaction.response.send_message(
                 "⚠️ The configured event channel is unavailable. Please reselect it in Access Control.",
                 ephemeral=True,
