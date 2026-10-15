@@ -73,6 +73,7 @@ clan_join_requests = db["clan_join_requests"]
 clan_invites = db["clan_invites"]
 clan_config = db["clan_config"]
 event_announcement_settings = db["event_announcement_settings"]
+event_records = db["event_records"]
 
 # Bump this whenever templates/terms.html or templates/privacy.html change in a way people
 # should re-accept. Everyone whose stored version differs is asked to authorize again.
@@ -1423,7 +1424,130 @@ def access_control_survey_banner_remove():
 
 @app.get("/events")
 def events_page():
-    return render_template("events.html")
+    now = now_utc()
+    records = list(event_records.find({}).sort("created_at", -1).limit(100))
+    for event in records:
+        event["id"] = str(event.get("_id", ""))
+        event["title"] = str(event.get("title", "Untitled event"))
+        event["description"] = str(event.get("description", ""))
+        event["date_time"] = str(event.get("date_time", "Time to be announced"))
+        event["location"] = str(event.get("location", ""))
+        event["notes"] = str(event.get("notes", ""))
+        event["status"] = event.get("status", "upcoming")
+        event["status_label"] = {
+            "upcoming": "Upcoming", "ongoing": "Ongoing",
+            "ended": "Ended", "cancelled": "Cancelled",
+        }.get(event["status"], "Upcoming")
+    user = session.get("discord_user")
+    admin = bool(user and is_admin(user.get("id", 0)))
+    return render_template(
+        "events.html",
+        events=records,
+        is_event_admin=admin,
+        csrf_token=session.get("csrf_token", ""),
+    )
+
+
+@app.post("/events/manage/status")
+def event_manage_status():
+    user = session.get("discord_user")
+    if not user or not is_admin(user.get("id", 0)):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("events_page", error="csrf"))
+    event_id = request.form.get("event_id", "").strip()
+    status = request.form.get("status", "").strip().lower()
+    if status not in {"upcoming", "ongoing", "ended", "cancelled"}:
+        return redirect(url_for("events_page", error="status"))
+    try:
+        from bson import ObjectId
+        record = event_records.find_one({"_id": ObjectId(event_id)})
+        if not record:
+            return redirect(url_for("events_page", error="missing"))
+        event_records.update_one(
+            {"_id": record["_id"]},
+            {"$set": {"status": status, "updated_at": now_utc(), "updated_by": int(user["id"])}},
+        )
+        bot = BOT.get("instance")
+        if bot and not bot.is_closed() and record.get("channel_id") and record.get("message_id"):
+            async def update_announcement():
+                status_labels = {
+                    "upcoming": "🟢 Upcoming", "ongoing": "🟠 Ongoing",
+                    "ended": "⚫ Ended", "cancelled": "🔴 Cancelled",
+                }
+                updated_view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(140, 72, 226))
+                if record.get("image_url"):
+                    container.add_item(discord.ui.MediaGallery(
+                        discord.MediaGalleryItem(
+                            media=record["image_url"],
+                            description=f"{record.get('title', 'Event')} event image",
+                        )
+                    ))
+                    container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
+                container.add_item(discord.ui.TextDisplay(content=f"## {record.get('title', 'Untitled event')}"))
+                if record.get("location"):
+                    container.add_item(discord.ui.TextDisplay(content=f"**Location:** {record['location']}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**Description:** {record.get('description', '')}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**When:** {record.get('date_time', 'Time to be announced')}"))
+                container.add_item(discord.ui.TextDisplay(content=f"**Status:** {status_labels[status]}"))
+                if record.get("notes"):
+                    container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {record['notes']}"))
+                container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+                container.add_item(discord.ui.ActionRow(discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label="View Event",
+                    url="https://halloween-discord-bot-production.up.railway.app/events",
+                )))
+                updated_view.add_item(container)
+                try:
+                    channel = bot.get_channel(int(record["channel_id"]))
+                    if channel is None:
+                        channel = await bot.fetch_channel(int(record["channel_id"]))
+                    message = await channel.fetch_message(int(record["message_id"]))
+                    await message.edit(view=updated_view)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+                    log.warning("Event status saved, but the original Discord announcement could not be updated.")
+            asyncio.run_coroutine_threadsafe(update_announcement(), bot.loop)
+    except Exception:
+        log.exception("Could not update event status")
+        return redirect(url_for("events_page", error="missing"))
+    return redirect(url_for("events_page", saved="status"))
+
+
+@app.post("/events/manage/remove")
+def event_manage_remove():
+    user = session.get("discord_user")
+    if not user or not is_admin(user.get("id", 0)):
+        return "Forbidden", 403
+    sent, expected = request.form.get("csrf_token", ""), session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(sent, expected):
+        return redirect(url_for("events_page", error="csrf"))
+    event_id = request.form.get("event_id", "").strip()
+    try:
+        from bson import ObjectId
+        record = event_records.find_one({"_id": ObjectId(event_id)})
+    except Exception:
+        record = None
+    if not record:
+        return redirect(url_for("events_page", error="missing"))
+    # Remove the stored event and best-effort delete the matching Discord announcement.
+    event_records.delete_one({"_id": record["_id"]})
+    bot = BOT.get("instance")
+    if bot and not bot.is_closed() and record.get("channel_id") and record.get("message_id"):
+        async def delete_announcement():
+            try:
+                channel = bot.get_channel(int(record["channel_id"]))
+                if channel is None:
+                    channel = await bot.fetch_channel(int(record["channel_id"]))
+                message = await channel.fetch_message(int(record["message_id"]))
+                await message.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+                log.warning("Event record removed; Discord announcement could not be deleted.")
+        asyncio.run_coroutine_threadsafe(delete_announcement(), bot.loop)
+    return redirect(url_for("events_page", saved="removed"))
 
 
 def _create_oauth_transaction(flow, consent=None):
@@ -6918,7 +7042,9 @@ class HalloweenBot(commands.Cog):
         title="Short event title",
         date_time="When the event starts, including timezone (for example: Oct 31 at 7 PM ET)",
         description="What the event is about",
-        image_url="Optional HTTPS image URL to display in the announcement",
+        location="Optional location or event location URL",
+        notes="Optional extra notes",
+        image_url="Optional HTTPS image URL to display at the top",
     )
     async def event_announcement(
         self,
@@ -6926,6 +7052,8 @@ class HalloweenBot(commands.Cog):
         title: app_commands.Range[str, 1, 100],
         date_time: app_commands.Range[str, 1, 100],
         description: app_commands.Range[str, 1, 1500],
+        location: Optional[app_commands.Range[str, 1, 300]] = None,
+        notes: Optional[app_commands.Range[str, 1, 1000]] = None,
         image_url: Optional[str] = None,
     ):
         if not is_admin(interaction.user.id):
@@ -6979,23 +7107,52 @@ class HalloweenBot(commands.Cog):
                 )
                 return
 
-        embed = discord.Embed(
-            title=f"🎃 {title.strip()}",
-            description=description.strip(),
-            color=discord.Color.from_rgb(124, 58, 237),
-            timestamp=now_utc(),
-        )
-        embed.add_field(name="📅 When", value=date_time.strip(), inline=False)
-        embed.set_footer(text="Aureolis • Upcoming Event")
+        # Discord Components V2 event card.
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(140, 72, 226))
         if image_url:
-            embed.set_image(url=image_url)
+            container.add_item(discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=image_url, description=f"{title.strip()} event image")
+            ))
+            container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+        container.add_item(discord.ui.TextDisplay(content="# 🎃 Events"))
+        container.add_item(discord.ui.TextDisplay(content=f"## {title.strip()}"))
+        if location and location.strip():
+            container.add_item(discord.ui.TextDisplay(content=f"**Location:** {location.strip()}"))
+        container.add_item(discord.ui.TextDisplay(content=f"**Description:** {description.strip()}"))
+        container.add_item(discord.ui.TextDisplay(content=f"**When:** {date_time.strip()}"))
+        container.add_item(discord.ui.TextDisplay(content="**Status:** 🟢 Upcoming"))
+        if notes and notes.strip():
+            container.add_item(discord.ui.TextDisplay(content=f"**Notes:** {notes.strip()}"))
+        container.add_item(discord.ui.Separator(divider=True, spacing=discord.SeparatorSpacing.small))
+        container.add_item(discord.ui.ActionRow(discord.ui.Button(
+            style=discord.ButtonStyle.link,
+            label="View Event",
+            url="https://halloween-discord-bot-production.up.railway.app/events",
+        )))
+        view.add_item(container)
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            await channel.send(
-                embed=embed,
+            sent_message = await channel.send(
+                view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
+            await db(event_records.insert_one, {
+                "guild_id": interaction.guild.id,
+                "channel_id": channel.id,
+                "message_id": sent_message.id,
+                "title": title.strip(),
+                "date_time": date_time.strip(),
+                "description": description.strip(),
+                "location": (location or "").strip(),
+                "notes": (notes or "").strip(),
+                "image_url": image_url,
+                "status": "upcoming",
+                "created_by": interaction.user.id,
+                "created_at": now_utc(),
+                "updated_at": now_utc(),
+            })
         except (discord.Forbidden, discord.HTTPException):
             log.exception("Could not post event announcement in channel %s", channel.id)
             await interaction.followup.send(
