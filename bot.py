@@ -5935,9 +5935,10 @@ def balance_candy_view(member, balance, server_name, clan_profile=None, badges=N
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
+    badge_emojis = " ".join(badge["emoji"] for badge in badges or [])
     head = (
         "## 🍬 Candy Balance\n"
-        f"**Member:** {member.mention}\n"
+        f"**Member:** {member.mention}{' ' + badge_emojis if badge_emojis else ''}\n"
         + (f"**Badges:** {badge_text}\n" if badge_text else "")
         + f"{clan_text}\n"
         + f"**Balance:** {int(balance):,} 🍬\n"
@@ -6010,13 +6011,14 @@ def profile_candy_view(
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
+    badge_emojis = " ".join(badge["emoji"] for badge in badges or [])
     personal_badge_text = f"**Badges:** {badge_text}\n" if badge_text else ""
     clan_text = (
         f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
-        f"## 🎃 {member.display_name}'s Profile\n"
+        f"## 🎃 {member.display_name}'s Profile{' ' + badge_emojis if badge_emojis else ''}\n"
         + personal_badge_text
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
