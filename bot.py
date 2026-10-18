@@ -3997,7 +3997,6 @@ def economy_trivia_loop():
         details={"enabled": enabled},
     )
     return redirect(url_for("economy_page", trivia_saved="1"))
-
 @app.post("/economy/trivia/shuffle")
 def economy_trivia_shuffle():
     user = session.get("discord_user")
@@ -5939,7 +5938,7 @@ def balance_candy_view(member, balance, server_name, clan_profile=None, badges=N
     head = (
         "## 🍬 Candy Balance\n"
         f"**Member:** {member.mention}{clan_profile.get('verification_emoji', '') if clan_profile else ''}\n"
-        + (f"**Badges:** {badge_text}\\n" if badge_text else "")
+        + (f"**Badges:** {badge_text}\n" if badge_text else "")
         + f"{clan_text}\n"
         + f"**Balance:** {int(balance):,} 🍬\n"
         + f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
@@ -6011,7 +6010,7 @@ def profile_candy_view(
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
-    personal_badge_text = f"**Badges:** {badge_text}\\n" if badge_text else ""
+    personal_badge_text = f"**Badges:** {badge_text}\n" if badge_text else ""
     clan_text = (
         f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
