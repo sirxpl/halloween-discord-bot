@@ -3998,7 +3998,6 @@ def economy_trivia_loop():
     )
     return redirect(url_for("economy_page", trivia_saved="1"))
 
-
 @app.post("/economy/trivia/shuffle")
 def economy_trivia_shuffle():
     user = session.get("discord_user")
@@ -5927,19 +5926,23 @@ def trick_or_treat_view(member, reward, new_balance, next_at, jackpot_rewards=No
     return view
 
 
-def balance_candy_view(member, balance, server_name, clan_profile=None):
-    """Components V2 card for /balance. Same layout as the /add card."""
+def balance_candy_view(member, balance, server_name, clan_profile=None, badges=None):
+    """Components V2 card for /balance, showing the member's own badges."""
     ui = discord.ui
     clan_text = (
         f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
+    badge_text = " ".join(
+        f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
+    )
     head = (
         "## 🍬 Candy Balance\n"
         f"**Member:** {member.mention}{clan_profile.get('verification_emoji', '') if clan_profile else ''}\n"
-        f"{clan_text}\n"
-        f"**Balance:** {int(balance):,} 🍬\n"
-        f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
+        + (f"**Badges:** {badge_text}\\n" if badge_text else "")
+        + f"{clan_text}\n"
+        + f"**Balance:** {int(balance):,} 🍬\n"
+        + f"**🍬 Clan contribution:** {int(clan_profile['contributed']) if clan_profile else 0:,} 🍬"
     )
     items = [
         ui.Section(ui.TextDisplay(head), accessory=ui.Thumbnail(member.display_avatar.url)),
@@ -6008,13 +6011,14 @@ def profile_candy_view(
     badge_text = " ".join(
         f"{badge['emoji']} **{badge['label']}**" for badge in badges or []
     )
+    personal_badge_text = f"**Badges:** {badge_text}\\n" if badge_text else ""
     clan_text = (
         f"🏰 **{discord.utils.escape_markdown(clan_profile['name'])}**"
         if clan_profile else "**🏰 Clan:** Not in a clan"
     )
     head = (
         f"## 🎃 {member.display_name}'s Profile{(' ' + clan_profile.get('verification_emoji', '')) if clan_profile else ''}\n"
-        + (f"{badge_text}\n" if badge_text else "")
+        + personal_badge_text
         + f"**🍬 Candy:** {int(user.get('balance', 0)):,}\n"
         + f"**🏆 Rank:** {'#' + format(rank, ',') if rank else '—'}\n"
         + f"**🎒 Items:** {len(inventory):,}\n"
@@ -6439,8 +6443,11 @@ class HalloweenBot(commands.Cog):
         target = member or interaction.user
         user = await db(ensure_user, interaction.guild.id, target.id, target.name, target.display_name)
         clan_profile = await db(clan_member_profile, interaction.guild.id, user)
+        badges = await db(member_badges_for_display, interaction.guild.id, target.id, target)
         await interaction.response.send_message(
-            view=balance_candy_view(target, user["balance"], interaction.guild.name, clan_profile),
+            view=balance_candy_view(
+                target, user["balance"], interaction.guild.name, clan_profile, badges=badges,
+            ),
             allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="trivia", description="Answer a trivia question to earn Candy.")
