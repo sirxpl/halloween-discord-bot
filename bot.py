@@ -1888,12 +1888,173 @@ def shop_requirement_text(guild, item):
 
 
 class OwnedShopView(discord.ui.LayoutView):
-    """The /shop menu belongs to whoever ran the command. Other people get a private 'not yours' reply."""
+    """Private, paginated Components V2 shop menu."""
 
-    def __init__(self, owner_id, timeout=600):
+    ITEMS_PER_PAGE = 5
+
+    def __init__(self, owner_id, guild, items, member, clan_perks=None, page=0, timeout=600):
         super().__init__(timeout=timeout)
         self.owner_id = int(owner_id)
+        self.guild = guild
+        self.items = list(items)
+        self.member = member
+        self.clan_perks = clan_perks or {}
+        self.page = max(0, min(int(page), self.total_pages - 1))
         self.message = None
+        self._build_page()
+
+    @property
+    def total_pages(self):
+        return max(1, (len(self.items) + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
+
+    def _page_items(self):
+        start = self.page * self.ITEMS_PER_PAGE
+        return self.items[start:start + self.ITEMS_PER_PAGE]
+
+    def _new_page_view(self, page):
+        return OwnedShopView(
+            self.owner_id, self.guild, self.items, self.member,
+            self.clan_perks, page=page,
+        )
+
+    def _build_page(self):
+        page_items = self._page_items()
+        summary = [
+            "# 🛒 Halloween Candy Shop",
+            f"<@{self.owner_id}>, spend your 🍬 Candy below. Only you can use these buttons.",
+            f"**Page {self.page + 1} of {self.total_pages}** · {len(self.items)} item(s) available",
+        ]
+
+        for item_data in page_items:
+            display_price, discounted = effective_shop_price(
+                self.guild.id, self.owner_id, item_data, self.clan_perks,
+            )
+            eligible = member_meets_shop_requirements(self.member, item_data)
+            requirement = shop_requirement_text(self.guild, item_data)
+            status = "✅ Eligible" if eligible else "🔒 Locked"
+            price_text = f"{display_price:,} 🍬"
+            if discounted:
+                price_text += f" (clan price; was {int(item_data.get('price', 0)):,})"
+            summary.append(
+                f"\n## {item_data.get('emoji', '🎃')} {item_data.get('name', 'Shop Item')} — {price_text}"
+                f"\n{item_data.get('description', '')}\n{status} • {requirement}"
+            )
+
+        if not self.items:
+            summary.append("\nNo shop items are currently configured.")
+        self.add_item(discord.ui.Container(discord.ui.TextDisplay("\n".join(summary)[:3900])))
+
+        if self.total_pages > 1:
+            options = []
+            # Discord select menus allow at most 25 options. Use a moving window
+            # so the current page remains selectable even in very large catalogs.
+            window_start = max(0, min(self.page - 12, self.total_pages - 25))
+            window_end = min(self.total_pages, window_start + 25)
+            for page_index in range(window_start, window_end):
+                options.append(discord.SelectOption(
+                    label=f"Page {page_index + 1}",
+                    value=str(page_index),
+                    default=(page_index == self.page),
+                ))
+            page_select = discord.ui.Select(
+                placeholder=f"Jump to page {self.page + 1} of {self.total_pages}",
+                min_values=1, max_values=1, options=options,
+            )
+
+            async def select_page(interaction: discord.Interaction):
+                new_view = self._new_page_view(int(page_select.values[0]))
+                await interaction.response.edit_message(view=new_view)
+                new_view.message = interaction.message
+
+            page_select.callback = select_page
+            select_row = discord.ui.ActionRow()
+            select_row.add_item(page_select)
+            self.add_item(discord.ui.Container(select_row))
+
+        buttons = []
+        for item_data in page_items:
+            offsale = not item_data.get("enabled", True)
+            disabled = offsale or not member_meets_shop_requirements(self.member, item_data)
+            if item_data.get("type") == "role":
+                role_id = item_data.get("reward", {}).get("role_id")
+                role = self.guild.get_role(int(role_id)) if role_id else None
+                if not role or role in getattr(self.member, "roles", []):
+                    disabled = True
+            button_label = (
+                f"Offsale: {item_data.get('name', 'Item')}" if offsale
+                else f"Buy {item_data.get('name', 'Item')}"
+            )
+            button = discord.ui.Button(
+                label=button_label[:80],
+                emoji=emoji_for_button(item_data.get("emoji")),
+                style=discord.ButtonStyle.secondary if offsale else (
+                    discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary
+                ),
+                disabled=disabled,
+            )
+
+            async def callback(btn_interaction, item_id=str(item_data["item_id"])):
+                item_now = await db(lambda: shop_items.find_one({
+                    "guild_id": btn_interaction.guild.id,
+                    "item_id": item_id,
+                    "enabled": True,
+                }))
+                if item_now:
+                    paid_price, discounted = effective_shop_price(
+                        btn_interaction.guild.id, btn_interaction.user.id, item_now,
+                    )
+                    price_text = f"{paid_price:,} 🍬"
+                    if discounted:
+                        price_text += " (10% clan discount)"
+                    prompt = f"Purchase **{item_now.get('name', 'Shop Item')}** for **{price_text}**?"
+                else:
+                    prompt = "This shop item is no longer available. Run **/shop** to refresh the catalog."
+                confirm_view = OwnedPurchaseConfirmationView(
+                    btn_interaction.user.id, btn_interaction.guild.id, item_id,
+                )
+                if item_now is None:
+                    for child in confirm_view.children:
+                        child.disabled = True
+                await btn_interaction.response.send_message(
+                    prompt, view=confirm_view, ephemeral=True,
+                )
+
+            button.callback = callback
+            buttons.append(button)
+
+        if buttons:
+            purchase_row = discord.ui.ActionRow()
+            for button in buttons:
+                purchase_row.add_item(button)
+            self.add_item(discord.ui.Container(purchase_row))
+
+        if self.total_pages > 1:
+            previous_button = discord.ui.Button(
+                label="Previous Page", emoji="⬅️",
+                style=discord.ButtonStyle.secondary, disabled=(self.page == 0),
+            )
+            next_button = discord.ui.Button(
+                label="Next Page", emoji="➡️",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.page >= self.total_pages - 1),
+            )
+
+            async def go_previous(interaction: discord.Interaction):
+                new_view = self._new_page_view(self.page - 1)
+                await interaction.response.edit_message(view=new_view)
+                new_view.message = interaction.message
+
+            async def go_next(interaction: discord.Interaction):
+                new_view = self._new_page_view(self.page + 1)
+                await interaction.response.edit_message(view=new_view)
+                new_view.message = interaction.message
+
+            previous_button.callback = go_previous
+            next_button.callback = go_next
+            navigation_row = discord.ui.ActionRow()
+            navigation_row.add_item(previous_button)
+            navigation_row.add_item(next_button)
+            self.add_item(discord.ui.Container(navigation_row))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -1908,7 +2069,7 @@ class OwnedShopView(discord.ui.LayoutView):
 
     async def on_timeout(self) -> None:
         for child in self.walk_children():
-            if isinstance(child, discord.ui.Button):
+            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
                 child.disabled = True
         if self.message is not None:
             try:
@@ -7169,95 +7330,30 @@ class HalloweenBot(commands.Cog):
     @app_commands.command(name="shop", description="Browse the Halloween Candy shop and buy items.")
     async def shop(self, interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True); return
+            await interaction.response.send_message("🍬 This command can only be used in a server.", ephemeral=True)
+            return
         if (await db(get_member_controls, interaction.guild.id, interaction.user.id))["blocked_from_candy"]:
-            await interaction.response.send_message("🚫 You are not allowed to participate in Candy activities in this server.", ephemeral=True); return
-        await db(ensure_user, interaction.guild.id, interaction.user.id, interaction.user.name, interaction.user.display_name)
+            await interaction.response.send_message(
+                "🚫 You are not allowed to participate in Candy activities in this server.",
+                ephemeral=True,
+            )
+            return
+
+        await db(
+            ensure_user, interaction.guild.id, interaction.user.id,
+            interaction.user.name, interaction.user.display_name,
+        )
         items = await db(get_shop_items_for_guild, interaction.guild.id, True)
         member = await db(get_fresh_member, interaction.guild.id, interaction.user.id)
         if member is None:
             member = interaction.user
         clan_perks = await db(member_clan_perks, interaction.guild.id, interaction.user.id)
-        view = OwnedShopView(interaction.user.id)
-        summary = ["# 🛒 Halloween Candy Shop", f"<@{interaction.user.id}>, spend your 🍬 Candy below. Only you can use these buttons."]
-        for item_data in items:
-            display_price, discounted = effective_shop_price(
-                interaction.guild.id, interaction.user.id, item_data, clan_perks,
-            )
-            if not item_data.get("enabled", True):
-                summary.append(
-                    f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — "
-                    f"{int(item_data.get('price',0)):,} 🍬\n{item_data.get('description','')}\n⛔ Offsale"
-                )
-                continue
-            eligible = member_meets_shop_requirements(member, item_data)
-            requirement = shop_requirement_text(interaction.guild, item_data)
-            status = "✅ Eligible" if eligible else "🔒 Locked"
-            price_text = f"{display_price:,} 🍬"
-            if discounted:
-                price_text += f" (clan price; was {int(item_data.get('price',0)):,})"
-            summary.append(f"\n## {item_data.get('emoji','🎃')} {item_data.get('name','Shop Item')} — {price_text}\n{item_data.get('description','')}\n{status} • {requirement}")
-        if not items: summary.append("\nNo shop items are currently configured.")
-        view.add_item(discord.ui.Container(discord.ui.TextDisplay("\n".join(summary)[:3900])))
-        buttons = []
-        for item_data in items[:25]:
-            offsale = not item_data.get("enabled", True)
-            disabled = offsale or not member_meets_shop_requirements(member, item_data)
-            if item_data.get("type") == "role":
-                role_id = item_data.get("reward", {}).get("role_id")
-                role = interaction.guild.get_role(int(role_id)) if role_id else None
-                if not role or role in getattr(member, "roles", []): disabled = True
-            button_label = f"Offsale: {item_data.get('name','Item')}" if offsale else f"Buy {item_data.get('name','Item')}"
-            button = discord.ui.Button(label=button_label[:80],
-                                       emoji=emoji_for_button(item_data.get("emoji")),
-                                       style=discord.ButtonStyle.secondary if offsale else (
-                                           discord.ButtonStyle.success if not disabled else discord.ButtonStyle.secondary
-                                       ),
-                                       disabled=disabled)
-
-            async def callback(btn_interaction, item_id=str(item_data["item_id"])):
-                item_now = await db(
-                    lambda: shop_items.find_one({
-                        "guild_id": btn_interaction.guild.id,
-                        "item_id": item_id,
-                        "enabled": True,
-                    })
-                )
-                if item_now:
-                    paid_price, discounted = effective_shop_price(
-                        btn_interaction.guild.id,
-                        btn_interaction.user.id,
-                        item_now,
-                    )
-                    price_text = f"{paid_price:,} 🍬"
-                    if discounted:
-                        price_text += " (10% clan discount)"
-                    prompt = (
-                        f"Purchase **{item_now.get('name', 'Shop Item')}** "
-                        f"for **{price_text}**?"
-                    )
-                else:
-                    prompt = "This shop item is no longer available. Run **/shop** to refresh the catalog."
-                confirm_view = OwnedPurchaseConfirmationView(
-                    btn_interaction.user.id,
-                    btn_interaction.guild.id,
-                    item_id,
-                )
-                if item_now is None:
-                    for child in confirm_view.children:
-                        child.disabled = True
-                await btn_interaction.response.send_message(
-                    prompt,
-                    view=confirm_view,
-                    ephemeral=True,
-                )
-            button.callback = callback
-            buttons.append(button)
-        for start in range(0, len(buttons), 5):
-            row = discord.ui.ActionRow()
-            for button in buttons[start:start + 5]: row.add_item(button)
-            view.add_item(discord.ui.Container(row))
-        await interaction.response.send_message(view=view, allowed_mentions=discord.AllowedMentions.none())
+        view = OwnedShopView(
+            interaction.user.id, interaction.guild, items, member, clan_perks, page=0,
+        )
+        await interaction.response.send_message(
+            view=view, allowed_mentions=discord.AllowedMentions.none(),
+        )
         view.message = await interaction.original_response()
 
     @app_commands.command(name="profile", description="View your or another member's Candy profile and inventory.")
