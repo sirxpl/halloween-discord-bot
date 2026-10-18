@@ -3997,7 +3997,8 @@ def economy_trivia_loop():
         details={"enabled": enabled},
     )
     return redirect(url_for("economy_page", trivia_saved="1"))
-@app.post("/economy/trivia/shuffle")def economy_trivia_shuffle():
+@app.post("/economy/trivia/shuffle")
+def economy_trivia_shuffle():
     user = session.get("discord_user")
     if not user:
         return redirect(url_for("login"))
