@@ -21,7 +21,7 @@
 <section class="card"><h2>Member management</h2>
 {% if request.args.get('saved') == 'purchase_refunded' %}<div class="notice">✓ Purchase removed and Candy refunded.</div>{% elif request.args.get('saved') == 'purchase_removed' %}<div class="notice">✓ Purchase removed without a refund.</div>{% elif request.args.get('saved') == 'clan_assigned' %}<div class="notice">✓ Member assigned to the clan. Clan progress starts at zero for them.</div>{% elif request.args.get('saved') == 'clan_removed' %}<div class="notice">✓ Member removed from their clan.</div>{% elif request.args.get('saved') %}<div class="notice">✓ Changes saved.</div>{% endif %}{% if request.args.get('error') == 'subtract' %}<div class="notice error">That member does not have enough Candy for the subtraction.</div>{% elif request.args.get('error') == 'purchase_missing' %}<div class="notice error">That purchase could not be found; refresh the page and try again.</div>{% elif request.args.get('error') == 'purchase_role_offline' %}<div class="notice error">The bot must be online in that server to remove a purchased Discord role.</div>{% elif request.args.get('error') == 'purchase_role_remove' %}<div class="notice error">The purchased Discord role could not be removed, so the purchase was left unchanged.</div>{% elif request.args.get('error') == 'clan' %}<div class="notice error">The clan assignment failed. Verify the server member and active clan, then retry.</div>{% elif request.args.get('error') %}<div class="notice error">Please check the values and try again.</div>{% endif %}
 <div class="users-pages" aria-label="User results and navigation">
-  <span>{% if total_entries %}Showing {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, total_entries]|min }} of {{ total_entries }} tracked users{% else %}No matching users{% endif %}</span>
+  <span>{% if total_entries %}Showing {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, total_entries]|min }} of {{ total_entries }} results (top 100){% else %}No matching users{% endif %}</span>
   {% if total_pages > 1 %}
   <nav class="users-page-links" aria-label="User pages">
     {% if page > 1 %}<a href="{{ url_for('users_page', q=search, page=page - 1) }}">← Previous</a>{% else %}<span>← Previous</span>{% endif %}
@@ -83,4 +83,11 @@
   </div>
 </div>
 {% else %}<p class="muted">No tracked users found for this search.</p>{% endfor %}
+{% if total_pages > 1 %}
+<nav class="users-pages users-page-links" aria-label="User page navigation">
+  {% if page > 1 %}<a href="{{ url_for('users_page', q=search, page=page - 1) }}">← Previous</a>{% else %}<span>← Previous</span>{% endif %}
+  <span>Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}<a href="{{ url_for('users_page', q=search, page=page + 1) }}">Next →</a>{% else %}<span>Next →</span>{% endif %}
+</nav>
+{% endif %}
 </section></main></body></html>
