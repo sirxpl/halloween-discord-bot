@@ -75,3 +75,8 @@
     border-radius: 18px;
   }
 }
+
+/* The site navigation takes priority while its mobile drawer is open. */
+@media (max-width: 760px) {
+  body.nav-open .ios-install-prompt { display: none !important; }
+}
