@@ -7550,10 +7550,36 @@ async def setup_bot(bot):
             log.info(f"Synced {len(synced)} application command(s).")
 
 
+def ensure_dashboard_indexes():
+    """Create non-unique indexes used by the busy dashboard pages.
+
+    Keep this best-effort: a free MongoDB tier or restricted database account
+    must not prevent the bot from starting if index creation is unavailable.
+    """
+    indexes = [
+        (users, [("balance", -1)], "dashboard_balance_desc"),
+        (users, [("guild_id", 1), ("balance", -1)], "dashboard_guild_balance_desc"),
+        (users, [("guild_id", 1), ("user_id", 1)], "dashboard_guild_user"),
+        (member_controls, [("leaderboard_excluded", 1)], "dashboard_leaderboard_excluded"),
+        (member_controls, [("guild_id", 1), ("user_id", 1)], "dashboard_member_controls"),
+        (clans, [("guild_id", 1), ("status", 1), ("name", 1)], "dashboard_active_clans"),
+        (member_badge_preferences, [("guild_id", 1), ("user_id", 1)], "dashboard_badge_preference"),
+        (presentation_settings, [("guild_id", 1)], "dashboard_presentation_settings"),
+    ]
+    for collection, fields, name in indexes:
+        try:
+            collection.create_index(fields, name=name, background=True)
+        except PyMongoError as exc:
+            log.warning("Could not ensure MongoDB index %s: %s", name, exc.__class__.__name__)
+    log.info("Dashboard index check completed")
+
+
 async def check_database():
     try:
         await db(mongo.admin.command, "ping")
         log.info("MongoDB connection OK.")
+        # Index creation is best-effort and should not delay Discord startup.
+        threading.Thread(target=ensure_dashboard_indexes, daemon=True).start()
     except PyMongoError as exc:
         log.error(
             "MongoDB check FAILED (%s). Commands will not work until MONGODB_URI "
