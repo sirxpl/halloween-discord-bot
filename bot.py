@@ -4302,27 +4302,30 @@ def users_page():
     if not is_admin(user["id"]):
         return "Forbidden", 403
 
-    # Users are tracked globally across every server. A record exists here
-    # whenever someone has interacted with the bot's economy features.
-    search = request.args.get("q", "").strip()
+    started = time.perf_counter()
+    # Keep the same 500 highest-balance records and top 100 global users as before.
+    # Avoid loading unrelated trivia/activity fields from large economy documents.
+    search = request.args.get("q", "").strip()[:80]
     query = {}
     if search:
+        literal_search = re.escape(search)
         terms = [
-            {"username": {"$regex": search, "$options": "i"}},
-            {"display_name": {"$regex": search, "$options": "i"}},
+            {"username": {"$regex": literal_search, "$options": "i"}},
+            {"display_name": {"$regex": literal_search, "$options": "i"}},
         ]
         if search.isdigit():
             terms.append({"user_id": int(search)})
         query["$or"] = terms
 
-    records = list(users.find(query).sort("balance", -1).limit(500))
+    records = list(users.find(
+        query,
+        {"guild_id": 1, "user_id": 1, "username": 1, "display_name": 1,
+         "balance": 1, "clan_id": 1, "inventory": 1},
+    ).sort("balance", -1).limit(500))
 
     bot = BOT.get("instance")
-    guild_names = {}
-    if bot is not None:
-        guild_names = {int(guild.id): guild.name for guild in bot.guilds}
+    guild_names = {int(guild.id): guild.name for guild in bot.guilds} if bot is not None else {}
 
-    # Group server-specific records into one global user entry.
     grouped = {}
     for record in records:
         uid = int(record.get("user_id", 0))
@@ -4344,33 +4347,57 @@ def users_page():
 
     global_users = sorted(
         grouped.values(),
-        key=lambda item: (-item["total_balance"], (item.get("display_name") or item.get("username") or "").lower())
+        key=lambda item: (
+            -item["total_balance"],
+            (item.get("display_name") or item.get("username") or "").lower(),
+        ),
     )[:100]
 
-    for entry in global_users:
-        server_ids = [int(record.get("guild_id", 0)) for record in entry["servers"] if record.get("guild_id")]
-        control_map = {
-            (int(item["guild_id"]), int(item["user_id"])): item
-            for item in member_controls.find(
-                {"user_id": entry["user_id"], "guild_id": {"$in": server_ids}}
-            )
-        }
+    # Render only one page's purchase history and administrative controls at a
+    # time; loading 100 users with inventories can make a very large HTML page.
+    page_size = 20
+    total_entries = len(global_users)
+    total_pages = max(1, (total_entries + page_size - 1) // page_size)
+    page = request.args.get("page", default=1, type=int) or 1
+    page = max(1, min(page, total_pages))
+    visible_users = global_users[(page - 1) * page_size:page * page_size]
+    visible_records = [record for entry in visible_users for record in entry["servers"]]
+
+    # N+1 fix: fetch restrictions and active clans ONCE for visible users,
+    # rather than up to three separate Mongo queries for every server record.
+    guild_ids = {int(record.get("guild_id", 0)) for record in visible_records}
+    user_ids = {int(entry["user_id"]) for entry in visible_users}
+    control_map = {}
+    clans_by_guild = {}
+    clans_by_key = {}
+    if guild_ids and user_ids:
+        for item in member_controls.find(
+            {"guild_id": {"$in": list(guild_ids)}, "user_id": {"$in": list(user_ids)}},
+            {"guild_id": 1, "user_id": 1, "blocked_from_candy": 1, "leaderboard_excluded": 1},
+        ):
+            control_map[(int(item["guild_id"]), int(item["user_id"]))] = item
+
+        for clan in clans.find(
+            {"guild_id": {"$in": list(guild_ids)}, "status": "active"},
+            {"guild_id": 1, "clan_id": 1, "name": 1},
+        ).sort("name", 1):
+            guild_id = int(clan["guild_id"])
+            clans_by_guild.setdefault(guild_id, []).append(clan)
+            clans_by_key[(guild_id, str(clan.get("clan_id")))] = clan
+
+    for entry in visible_users:
+        uid = int(entry["user_id"])
         for record in entry["servers"]:
-            control = control_map.get(
-                (int(record.get("guild_id", 0)), entry["user_id"]), {}
-            )
+            guild_id = int(record.get("guild_id", 0))
+            control = control_map.get((guild_id, uid), {})
             record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
             record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
             current_clan_id = record.get("clan_id")
-            record["clan"] = clans.find_one({
-                "guild_id": int(record.get("guild_id", 0)),
-                "clan_id": current_clan_id,
-                "status": "active",
-            }) if current_clan_id else None
-            record["available_clans"] = list(clans.find(
-                {"guild_id": int(record.get("guild_id", 0)), "status": "active"},
-                {"clan_id": 1, "name": 1},
-            ).sort("name", 1))
+            record["clan"] = (
+                clans_by_key.get((guild_id, str(current_clan_id)))
+                if current_clan_id else None
+            )
+            record["available_clans"] = clans_by_guild.get(guild_id, [])
             record["purchases"] = []
             for purchase in record.get("inventory", []) or []:
                 if not isinstance(purchase, dict):
@@ -4383,12 +4410,20 @@ def users_page():
                 )
                 record["purchases"].append(purchase)
 
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if elapsed_ms > 750:
+        log.info("/users rendered in %.0f ms (page %d/%d, %d entries, %d rows)",
+                 elapsed_ms, page, total_pages, len(visible_users), len(visible_records))
     return render_template(
         "users.html",
         user=user,
         avatar_url=discord_avatar_url(user),
         search=search,
-        users=global_users,
+        users=visible_users,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+        total_entries=total_entries,
     )
 
 
@@ -4438,14 +4473,14 @@ def users_candy():
                 return_document=ReturnDocument.AFTER,
             )
             if result is None:
-                return redirect(url_for("users_page", q=request.form.get("q", ""), error="subtract"))
+                return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="subtract"))
         log_activity("admin_add" if action == "add" else "admin_subtract",
                      user_id=member_id, guild_id=guild_id, amount=amount,
                      details={"changed_by": user["id"], "source": "web_users"})
         notify_candy_change_from_web(guild_id, member_id, action, amount, result["balance"], user)
-        return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), saved=action))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="invalid"))
 
 
 @app.post("/users/clan")
@@ -4495,8 +4530,8 @@ def users_clan():
             },
         )
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=search, error="clan"))
-    return redirect(url_for("users_page", q=search, saved=saved))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="clan"))
+    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), saved=saved))
 
 
 @app.post("/users/purchase/remove")
@@ -4523,7 +4558,7 @@ def users_purchase_remove():
                 "purchased_at": datetime.fromtimestamp(purchased_at_ms / 1000, timezone.utc),
             }
     except (TypeError, ValueError, OverflowError):
-        return redirect(url_for("users_page", q=search, error="invalid"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="invalid"))
 
     member_record = users.find_one({"guild_id": guild_id, "user_id": member_id})
     if purchase_id:
@@ -4542,11 +4577,11 @@ def users_purchase_remove():
             None,
         )
     if purchase is None:
-        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_missing"))
 
     price = int(purchase.get("price", 0) or 0)
     if price < 0:
-        return redirect(url_for("users_page", q=search, error="invalid"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="invalid"))
 
     role_id = purchase.get("role_id")
     if purchase.get("type") == "role" and not role_id:
@@ -4556,7 +4591,7 @@ def users_purchase_remove():
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         if guild is None:
-            return redirect(url_for("users_page", q=search, error="purchase_role_offline"))
+            return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_offline"))
         role = guild.get_role(int(role_id))
         if role is not None:
             try:
@@ -4568,7 +4603,7 @@ def users_purchase_remove():
                     "Could not fetch member %s in guild %s before removing shop purchase %s.",
                     member_id, guild_id, purchase.get("purchase_id", item_id),
                 )
-                return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+                return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_remove"))
             if member is not None and role in member.roles:
                 try:
                     _run_on_bot_loop(
@@ -4586,7 +4621,7 @@ def users_purchase_remove():
                         "Could not revoke shop role %s from member %s in guild %s while removing purchase %s.",
                         role_id, member_id, guild_id, purchase.get("purchase_id", item_id),
                     )
-                    return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+                    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_remove"))
 
     update = {"$pull": {"inventory": purchase_match}}
     if refund == "1":
@@ -4597,7 +4632,7 @@ def users_purchase_remove():
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
-        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_missing"))
 
     log_activity(
         "shop_purchase_removed",
@@ -4615,7 +4650,7 @@ def users_purchase_remove():
     )
     if refund == "1" and price:
         notify_candy_change_from_web(guild_id, member_id, "add", price, updated["balance"], user)
-    return redirect(url_for("users_page", q=search, saved="purchase_refunded" if refund == "1" else "purchase_removed"))
+    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), saved="purchase_refunded" if refund == "1" else "purchase_removed"))
 
 
 @app.post("/users/control")
@@ -4633,9 +4668,9 @@ def users_control():
         set_member_control(guild_id, member_id, field, enabled, user["id"])
         log_activity("member_control", user_id=member_id, guild_id=guild_id,
                      details={"control": field, "enabled": enabled, "source": "web_users", "changed_by": user["id"]})
-        return redirect(url_for("users_page", q=request.form.get("q", ""), saved="control"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), saved="control"))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="invalid"))
 
 
 @app.get("/access-control")
