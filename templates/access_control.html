@@ -70,6 +70,7 @@
     .gl-flash.err{background:#3b2020;color:#fca5a5;border:1px solid #633232}
     @media (max-width: 760px){.gl-row{grid-template-columns:1fr}.gl-row .gl-remove{grid-column:auto}}
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
 </head>
 <body>
 {% macro limit_card(kind, icon, title, intro, amount_label, note) %}
