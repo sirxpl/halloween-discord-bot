@@ -1,0 +1,19 @@
+{
+  "name": "Aureolis Halloween Dashboard",
+  "short_name": "Aureolis",
+  "description": "Halloween candy, clans, events and rewards",
+  "id": "/dashboard",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0b12",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "/static/aureolis-app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
