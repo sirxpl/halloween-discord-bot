@@ -24,6 +24,13 @@
     .note{margin-top:20px;color:#756d80;font-size:11px;line-height:1.6}.success{margin-top:20px;padding:14px 18px;border-radius:14px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.25);color:#bbf7d0}.cooldown-box{margin-top:20px}.button{border:0;cursor:pointer;font:inherit}
     @media(max-width:650px){.card{padding:34px 20px}}
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest', v='20261023') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='aureolis-app-icon.svg') }}">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Aureolis">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 {% include "_sidebar.html" %}

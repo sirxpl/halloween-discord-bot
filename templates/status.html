@@ -7,6 +7,13 @@
   <title>Aureolis • Status</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='status.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest', v='20261023') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='aureolis-app-icon.svg') }}">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Aureolis">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
   {% include "_sidebar.html" %}

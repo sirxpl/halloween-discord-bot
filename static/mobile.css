@@ -1,0 +1,212 @@
+@import url("ios-install.css?v=20261023");
+/*
+ * Aureolis dashboard — mobile overrides.
+ * Loaded AFTER page-specific styles by dashboard templates.
+ * All desktop rules remain in dashboard.css.
+ */
+.mobile-header,
+.sidebar-close,
+.nav-backdrop { display: none; }
+
+@media (max-width: 760px) {
+  html { max-width: 100%; }
+  body:not(.guest-dashboard) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow-x: clip;
+  }
+  body.nav-open { overflow: hidden; }
+  body:not(.guest-dashboard) .mobile-header {
+    position: sticky;
+    top: 0;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 64px;
+    padding: max(10px, env(safe-area-inset-top)) 16px 10px;
+    border-bottom: 1px solid #31273c;
+    background: rgba(11, 9, 18, .97);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  .mobile-menu-button, .sidebar-close {
+    appearance: none;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid #443650;
+    color: #f8f5ff;
+    background: #21182d;
+    cursor: pointer;
+    font: 700 23px/1 system-ui, sans-serif;
+  }
+  .mobile-header .mobile-brand {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .mobile-header .mobile-brand strong { font-size: 15px; color: #fff; }
+  .mobile-header .mobile-brand span { margin-top: 2px; color: #a99ab8; font-size: 11px; }
+  body .sidebar {
+    position: fixed;
+    z-index: 1300;
+    inset: 0 auto 0 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    align-self: auto;
+    width: min(310px, 86vw);
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    flex: none;
+    padding: max(25px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    border-right: 1px solid #49385b;
+    background: #0e0b17;
+    box-shadow: 22px 0 60px rgba(0,0,0,.5);
+    transform: translateX(-105%);
+    transition: transform .22s ease, visibility .22s ease;
+    visibility: hidden;
+    pointer-events: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  body.nav-open .sidebar {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+  }
+  body .sidebar .brand {
+    justify-content: flex-start;
+    padding: 0 48px 24px 4px;
+  }
+  body .sidebar .brand-mark { margin: 0; flex: 0 0 40px; }
+  body .sidebar .brand > div:not(.brand-mark) { display: block; }
+  body .sidebar .dashboard-nav a {
+    display: flex;
+    justify-content: flex-start;
+    min-height: 44px;
+    gap: 12px;
+    padding: 11px 13px;
+    font-size: 14px;
+  }
+  body .sidebar .dashboard-nav a span { flex: 0 0 22px; width: 22px; }
+  body .sidebar .profile-mini div:not(.avatar) { display: block; min-width: 0; }
+  body .sidebar .dots { display: inline; }
+  .sidebar .sidebar-close {
+    display: inline-grid;
+    position: absolute;
+    top: max(20px, env(safe-area-inset-top));
+    right: 14px;
+    z-index: 1;
+    font-size: 20px;
+  }
+  .nav-backdrop {
+    position: fixed;
+    display: block;
+    z-index: 1250;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(0,0,0,.67);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .22s ease, visibility .22s ease;
+  }
+  body.nav-open .nav-backdrop {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+  /* Do not let the sidebar consume space next to phone content. */
+  body > main.dashboard-main,
+  body > main.section-main {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin: 0 auto;
+    padding: 22px 16px 42px;
+  }
+  body > main.dashboard-main.wrap,
+  body > main.section-main.wrap { width: 100%; }
+  body main .hero, body main header.hero { padding: 22px 20px; }
+  body main .hero h1, body main header.hero h1 { font-size: clamp(28px, 8vw, 40px); line-height: 1.15; overflow-wrap: anywhere; }
+  body main .hero h2 { font-size: clamp(20px, 6vw, 28px); overflow-wrap: anywhere; }
+  body main .hero p { overflow-wrap: anywhere; }
+  body main .card, body main .panel, body main .access-card { min-width: 0; }
+  body main .grid,
+  body main .grid2,
+  body main .cats,
+  body main .form-grid,
+  body main .server-picker,
+  body main .feature-grid,
+  body main .reward-band,
+  body main .howto,
+  body main .steps,
+  body main .toolbar,
+  body main .action,
+  body main .boost-form,
+  body main .clan-verification-form,
+  body main .badge-config-form,
+  body main .gl-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body main .gl-row .gl-remove { grid-column: auto; }
+  body main .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body main .actions:not(.control) { max-width: 100%; }
+  body main .command-row,
+  body main .server-row,
+  body main .boost-row,
+  body main .user-head,
+  body main .access-header,
+  body main .question-row {
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 12px;
+  }
+  body main .command-info, body main .server-name { min-width: 0; overflow-wrap: anywhere; }
+  body main .badge-form-actions, body main .item-actions, body main .question-actions { flex-wrap: wrap; }
+  body main input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  body main select, body main textarea { max-width: 100%; min-width: 0; }
+  body main img, body main video, body main iframe { max-width: 100%; }
+  body main table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  body main .panel, body main .card, body main .access-card { overflow-wrap: anywhere; }
+  body main .board-head, body main .board > .row,
+  body main .member-board-head, body main .member-row {
+    grid-template-columns: 40px minmax(0, 1fr) minmax(74px, 98px);
+    gap: 8px;
+  }
+  body main .player, body main .member-player, body main .name-line { min-width: 0; }
+  body main .player > div, body main .member-player > div { min-width: 0; }
+  body main .candy, body main .member-candy { font-size: 12px; overflow-wrap: anywhere; }
+  body main .dashboard-main > header, body main header:not(.hero) { flex-wrap: wrap; gap: 12px; }
+  body main .hero .moon { display: none; }
+  body main .row { max-width: 100%; }
+  body main .purchase, body main .shop-row { flex-wrap: wrap; }
+  body main .dd-panel { max-width: 100%; }
+  body main .emoji-line input { min-width: 0; flex: 1 1 auto; }
+  body main .profile-hero { flex-wrap: wrap; }
+  .guest-dashboard .mobile-header, .guest-dashboard .nav-backdrop { display: none !important; }
+  body.guest-dashboard > main.dashboard-main { padding: 16px; }
+}
+@media (max-width: 460px) {
+  body main .stats, body main .actions { grid-template-columns: minmax(0, 1fr); }
+  body main .panel, body main .card, body main .access-card { padding: 18px 16px; }
+  body main .hero, body main header.hero { padding: 22px 17px; }
+  body main .row, body main .board-head, body main .board > .row,
+  body main .member-board-head, body main .member-row { padding-left: 10px; padding-right: 10px; }
+  body main .role-badge-chip { max-width: 100%; white-space: normal; }
+  body main .button, body main .btn, body main .primary { max-width: 100%; }
+  body main .profile-hero h1 { overflow-wrap: anywhere; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body .sidebar, .nav-backdrop { transition: none; }
+}

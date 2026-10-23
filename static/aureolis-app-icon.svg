@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Aureolis pumpkin">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5b21b6"/><stop offset="1" stop-color="#1c102d"/></linearGradient>
+    <linearGradient id="pumpkin" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffb25a"/><stop offset=".55" stop-color="#f97316"/><stop offset="1" stop-color="#b9450a"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <path d="M241 136c1-33 14-55 40-66l25 28c-17 9-25 19-27 41" fill="#3d9246"/>
+  <path d="M256 150c55-34 137-14 158 73 24 102-40 189-158 189S74 325 98 223c21-87 103-107 158-73Z" fill="url(#pumpkin)"/>
+  <path d="M210 151c-39 43-51 202 2 252M301 152c40 43 51 202-2 252" fill="none" stroke="#b64819" stroke-width="15" stroke-linecap="round" opacity=".45"/>
+  <path d="m169 237 39-33 25 54-66 2Zm174 0-39-33-25 54 66 2Z" fill="#291326"/>
+  <path d="M168 310c43 48 133 53 176 0-44 20-130 20-176 0Z" fill="#291326"/>
+  <path d="M207 318v26M256 321v28M305 317v27" stroke="#fca35b" stroke-width="12" stroke-linecap="round"/>
+</svg>

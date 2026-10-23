@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aureolis • Halloween Event</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='ios-install.css', v='20261023') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest', v='20261023') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='aureolis-app-icon.svg') }}">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Aureolis">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
   <div class="glow glow-one"></div>
@@ -111,5 +118,7 @@
 
     <footer>🎃 Aureolis Halloween Bot <span>•</span> The spooky season starts here. <span>•</span> <a href="/terms">Terms of Service</a> <span>•</span> <a href="/privacy">Privacy Policy</a></footer>
   </main>
+  {% include "ios_install_prompt.html" %}
+  <script defer src="{{ url_for('static', filename='ios-install.js', v='20261023') }}"></script>
 </body>
 </html>

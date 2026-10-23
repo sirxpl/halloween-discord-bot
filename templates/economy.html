@@ -50,6 +50,13 @@
     .subcard{background:#100c18;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:18px;margin-top:16px}
     @media(max-width:700px){.section-main{padding:22px}.hero h1{font-size:38px}.question-row{flex-direction:column}.question-actions{justify-content:flex-start}}
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest', v='20261023') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='aureolis-app-icon.svg') }}">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Aureolis">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body>
 {% include "_sidebar.html" %}
