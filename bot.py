@@ -4390,7 +4390,7 @@ def users_page():
     records = list(users.find(
         query,
         {"guild_id": 1, "user_id": 1, "username": 1, "display_name": 1,
-         "balance": 1, "clan_id": 1, "inventory": 1},
+         "balance": 1, "clan_id": 1},
     ).sort("balance", -1).limit(500))
 
     bot = BOT.get("instance")
@@ -4433,6 +4433,17 @@ def users_page():
     visible_users = global_users[(page - 1) * page_size:page * page_size]
     visible_records = [record for entry in visible_users for record in entry["servers"]]
 
+    # Large inventories can make economy documents expensive to transfer.
+    # Read them only for the records actually displayed on this page, using
+    # MongoDB's indexed _id values so no other guild's history is mixed in.
+    visible_record_ids = [record["_id"] for record in visible_records if "_id" in record]
+    inventory_by_id = {
+        record["_id"]: record.get("inventory", []) or []
+        for record in users.find(
+            {"_id": {"$in": visible_record_ids}}, {"inventory": 1}
+        )
+    } if visible_record_ids else {}
+
     # N+1 fix: fetch restrictions and active clans ONCE for visible users,
     # rather than up to three separate Mongo queries for every server record.
     guild_ids = {int(record.get("guild_id", 0)) for record in visible_records}
@@ -4469,7 +4480,7 @@ def users_page():
             )
             record["available_clans"] = clans_by_guild.get(guild_id, [])
             record["purchases"] = []
-            for purchase in record.get("inventory", []) or []:
+            for purchase in inventory_by_id.get(record.get("_id"), []):
                 if not isinstance(purchase, dict):
                     continue
                 purchase = dict(purchase)
