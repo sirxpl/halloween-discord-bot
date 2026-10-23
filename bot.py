@@ -2466,11 +2466,19 @@ def get_bot_member(guild_id, user_id):
         return None
 
 
-def get_bot_members_for_display(member_keys):
+def get_bot_members_for_display(member_keys, max_wait=None):
+    """Fetch member role data concurrently.
+
+    The default behavior is unchanged for existing callers. Web leaderboards
+    pass max_wait to get partial results instead of blocking the HTML page
+    for a long Discord API timeout.
+    """
     bot = BOT.get("instance")
     if bot is None or bot.is_closed():
         return {}
     keys = {(int(guild_id), int(user_id)) for guild_id, user_id in member_keys}
+    if not keys:
+        return {}
 
     async def fetch_member(guild_id, user_id, semaphore):
         guild = bot.get_guild(guild_id)
@@ -2485,21 +2493,83 @@ def get_bot_members_for_display(member_keys):
             except discord.NotFound:
                 return (guild_id, user_id), None
             except Exception:
-                log.exception("Could not fetch Discord member %s in guild %s", user_id, guild_id)
+                log.warning("Could not fetch Discord member %s in guild %s", user_id, guild_id)
                 return (guild_id, user_id), None
 
     async def fetch_all():
         semaphore = asyncio.Semaphore(5)
-        return await asyncio.gather(
-            *(fetch_member(guild_id, user_id, semaphore) for guild_id, user_id in keys)
-        )
+        tasks = [
+            asyncio.create_task(fetch_member(guild_id, user_id, semaphore))
+            for guild_id, user_id in keys
+        ]
+        if max_wait is None:
+            return await asyncio.gather(*tasks)
+
+        done, pending = await asyncio.wait(tasks, timeout=max_wait)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        return [
+            task.result() for task in done
+            if not task.cancelled() and task.exception() is None
+        ]
 
     try:
-        results = _run_on_bot_loop(bot, fetch_all(), 15)
-        return dict(results)
+        timeout = 15 if max_wait is None else max_wait + 2
+        return dict(_run_on_bot_loop(bot, fetch_all(), timeout))
     except Exception:
-        log.exception("Could not load Discord members for leaderboard badge display")
+        log.warning("Discord member display lookup did not finish within its time budget")
         return {}
+
+
+# Cache recent role lookups only for the web leaderboard. Critical role grants,
+# purchases and permission checks continue to fetch current Discord state.
+_web_leaderboard_member_cache = {}
+_web_leaderboard_member_cache_lock = threading.Lock()
+
+
+def get_web_leaderboard_members(member_keys):
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return {}
+    keys = {(int(gid), int(uid)) for gid, uid in member_keys}
+    if not keys:
+        return {}
+
+    now = time.monotonic()
+    result = {}
+    missing = []
+    with _web_leaderboard_member_cache_lock:
+        for key, (expiry, cache_bot, _) in list(_web_leaderboard_member_cache.items()):
+            if expiry <= now or cache_bot is not bot:
+                del _web_leaderboard_member_cache[key]
+
+        for guild_id, user_id in keys:
+            guild = bot.get_guild(guild_id)
+            member = guild.get_member(user_id) if guild else None
+            if member is not None:
+                result[(guild_id, user_id)] = member
+                continue
+            cached = _web_leaderboard_member_cache.get((guild_id, user_id))
+            if cached is not None:
+                if cached[2] is not None:
+                    result[(guild_id, user_id)] = cached[2]
+            else:
+                missing.append((guild_id, user_id))
+
+    if missing:
+        fetched = get_bot_members_for_display(missing, max_wait=2.0)
+        now = time.monotonic()
+        with _web_leaderboard_member_cache_lock:
+            for key in missing:
+                member = fetched.get(key)
+                # Do not repeatedly hammer Discord when lookups time out.
+                ttl = 60 if member is not None else 10
+                _web_leaderboard_member_cache[key] = (now + ttl, bot, member)
+                if member is not None:
+                    result[key] = member
+    return result
 
 
 DAILY_REWARD = 100
@@ -5478,6 +5548,7 @@ def daily_claim():
 
 @app.get("/leaderboard")
 def leaderboard_page():
+    started = time.perf_counter()
     try:
         excluded_pairs = {
             (int(record["guild_id"]), int(record["user_id"]))
@@ -5485,66 +5556,78 @@ def leaderboard_page():
                 {"leaderboard_excluded": True}, {"guild_id": 1, "user_id": 1}
             )
         }
-        candidates = list(users.find({}).sort("balance", -1).limit(200))
-        top_users = [doc for doc in candidates if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs][:25]
-        discord_bot = BOT["instance"]
-        leaderboard = []
+        # Fetch only what this page displays, not entire economy inventories.
+        candidates = list(users.find(
+            {},
+            {"guild_id": 1, "user_id": 1, "balance": 1,
+             "username": 1, "display_name": 1},
+        ).sort("balance", -1).limit(200))
+        top_users = [
+            doc for doc in candidates
+            if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs
+        ][:25]
+
+        discord_bot = BOT.get("instance")
         badge_configs_by_guild = {}
         badge_member_keys = []
+        preference_pairs = []
         for doc in top_users:
             guild_id = int(doc.get("guild_id", 0))
+            user_id = doc.get("user_id")
             if guild_id not in badge_configs_by_guild:
                 badge_configs_by_guild[guild_id] = get_badge_configs(guild_id)
-            if (any(config["target_type"] == "role" for config in badge_configs_by_guild[guild_id])
-                    and doc.get("user_id") is not None):
-                badge_member_keys.append((guild_id, doc["user_id"]))
-        badge_members = get_bot_members_for_display(badge_member_keys)
+            configs = badge_configs_by_guild[guild_id]
+            if user_id is not None and configs:
+                preference_pairs.append((guild_id, int(user_id)))
+                if any(config["target_type"] == "role" for config in configs):
+                    badge_member_keys.append((guild_id, int(user_id)))
+
+        # Bounded best-effort role enrichment: an API slowdown cannot hold up the
+        # leaderboard indefinitely, and successful lookups are briefly cached.
+        badge_members = get_web_leaderboard_members(badge_member_keys)
+
+        # One preference query for the entire leaderboard, instead of one per row.
+        badge_preferences = {}
+        if preference_pairs:
+            guild_ids = sorted({pair[0] for pair in preference_pairs})
+            user_ids = sorted({pair[1] for pair in preference_pairs})
+            for preference in member_badge_preferences.find(
+                {"guild_id": {"$in": guild_ids}, "user_id": {"$in": user_ids}},
+                {"guild_id": 1, "user_id": 1, "target": 1},
+            ):
+                badge_preferences[(int(preference["guild_id"]),
+                                   int(preference["user_id"]))] = preference.get("target")
+
+        leaderboard = []
         for doc in top_users:
             user_id = doc.get("user_id")
             guild_id = int(doc.get("guild_id", 0))
-            discord_user = discord_bot.get_user(user_id) if discord_bot else None
+            discord_user = (
+                discord_bot.get_user(int(user_id))
+                if discord_bot and user_id is not None else None
+            )
+            member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
 
-            # Existing MongoDB records may not have a stored username yet.            # If the user is not cached, fetch their Discord account directly
-            # through the bot's running event loop instead of showing the ID.
-            if discord_user is None and discord_bot and not discord_bot.is_closed():
-                try:
-                    future = asyncio.run_coroutine_threadsafe(
-                        discord_bot.fetch_user(user_id),
-                        discord_bot.loop,
-                    )
-                    discord_user = future.result(timeout=5)
-                    if discord_user:
-                        users.update_one(
-                            {"guild_id": doc.get("guild_id"), "user_id": user_id},
-                            {"$set": {
-                                "username": discord_user.name,
-                                "display_name": discord_user.display_name,
-                            }},
-                        )
-                except Exception:
-                    log.exception("Could not fetch Discord profile for %s", user_id)
-
-
+            # Never block a web request on individual Discord profile REST calls.
+            # Most records already include the username from economy interactions.
+            saved_name = doc.get("username")
             name = (
-                f"@{doc.get('username')}"
-                if doc.get("username")
-                else (f"@{discord_user.name}" if discord_user else "@Unknown User")
+                f"@{saved_name}" if saved_name
+                else f"@{discord_user.name}" if discord_user
+                else f"@{member.name}" if member
+                else f"@{user_id}" if user_id is not None else "@Unknown User"
             )
             avatar_url = None
-            if discord_user:
+            source = discord_user or member
+            if source is not None:
                 try:
-                    avatar_url = str(discord_user.display_avatar.url)
+                    avatar_url = str(source.display_avatar.url)
                 except Exception:
-                    avatar_url = None
+                    pass
 
-            badge_configs = badge_configs_by_guild[guild_id]
-            member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
-            preferred_badge = (
-                get_member_badge_preference(guild_id, user_id)
-                if user_id is not None else None
-            )
             badges, name_gradient, _, _ = badge_presentation_for_member(
-                user_id, member, badge_configs, preferred_badge
+                user_id, member, badge_configs_by_guild[guild_id],
+                badge_preferences.get((guild_id, int(user_id))) if user_id is not None else None,
             )
             leaderboard.append({
                 "name": name,
@@ -5557,7 +5640,12 @@ def leaderboard_page():
     except PyMongoError:
         log.exception("Leaderboard could not reach MongoDB")
         leaderboard, db_ok = [], False
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if elapsed_ms > 750:
+        log.info("/leaderboard loaded in %.0f ms (%d entries)",
+                 elapsed_ms, len(leaderboard))
     return render_template("leaderboard.html", leaderboard=leaderboard, db_ok=db_ok)
+
 
 @app.get("/status")
 def status_page():
