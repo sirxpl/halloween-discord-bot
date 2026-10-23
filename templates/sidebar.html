@@ -22,9 +22,15 @@
   ('/shop-panel', '🎭', 'Shop Panel'),
   ('/access-control', '🛡️', 'Access Control'),
 ] %}
-<aside class="sidebar">
+<header class="mobile-header" aria-label="Mobile dashboard header">
+  <button id="mobile-menu-toggle" class="mobile-menu-button" type="button" aria-label="Open dashboard menu" aria-controls="dashboard-sidebar" aria-expanded="false">☰</button>
+  <div class="mobile-brand"><strong>🎃 Aureolis</strong><span>Halloween Dashboard</span></div>
+</header>
+<button id="mobile-nav-backdrop" class="nav-backdrop" type="button" aria-label="Close dashboard menu" tabindex="-1"></button>
+<aside class="sidebar" id="dashboard-sidebar" aria-label="Dashboard navigation">
+  <button id="mobile-menu-close" class="sidebar-close" type="button" aria-label="Close dashboard menu">×</button>
   <div class="brand"><div class="brand-mark">🎃</div><div><strong>Aureolis</strong><span>Halloween Bot</span></div></div>
-  <nav class="dashboard-nav">
+  <nav class="dashboard-nav" aria-label="Dashboard sections">
     {% for href, icon, label in (member_links if sidebar_user else guest_links) %}
     <a class="{{ 'active' if request.path == href or request.path.startswith(href ~ '/') }}" href="{{ href }}"><span>{{ icon }}</span> {{ label }}</a>
     {% endfor %}
@@ -60,3 +66,4 @@
     </details>
   </div>
 </aside>
+<script defer src="{{ url_for('static', filename='mobile-nav.js', v='20261023') }}"></script>
