@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Aureolis • Halloween Dashboard</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261005') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
 </head>
 <body class="{% if not user %}guest-dashboard{% endif %}">
   {% include "_sidebar.html" %}
