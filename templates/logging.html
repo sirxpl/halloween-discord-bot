@@ -25,7 +25,8 @@
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.chip{padding:7px 12px;border-radius:99px;border:1px solid rgba(255,255,255,.1);color:#c9c3d8;text-decoration:none;font-size:12px;font-weight:700;background:#14121c}.chip.active{background:#7c3aed;border-color:#7c3aed;color:#fff}
 .row{padding:14px 0;border-bottom:1px solid rgba(255,255,255,.07);display:flex;gap:12px}.row:last-child{border-bottom:0}.row-emoji{font-size:20px;width:28px;text-align:center}.row-main{min-width:0}.row-main .meta{font-size:12px;margin-top:3px;word-break:break-word}
 @media(max-width:800px){.grid,.cats{grid-template-columns:1fr}.section-main{padding:22px}.hero h1{font-size:32px}}
-</style></head>
+</style>  <link rel="stylesheet" href="{{ url_for('static', filename='mobile.css', v='20261023') }}">
+</head>
 <body>{% include "_sidebar.html" %}
 {% macro status_badge(key) %}{% set d = logging_config.delivery.get(key) %}{% if d %}<span class="badge {{ 'ok' if d.ok else 'err' }}">{{ '✓ Working' if d.ok else '✗ Failing' }}</span>{% else %}<span class="badge idle">Not tested</span>{% endif %}{% endmacro %}
 {% macro status_text(key) %}{% set d = logging_config.delivery.get(key) %}{% if d %}<div class="delivery">Last delivery: {{ d.message }}{% if d.at %} · {{ d.at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</div>{% endif %}{% endmacro %}
