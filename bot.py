@@ -2466,11 +2466,19 @@ def get_bot_member(guild_id, user_id):
         return None
 
 
-def get_bot_members_for_display(member_keys):
+def get_bot_members_for_display(member_keys, max_wait=None):
+    """Fetch member role data concurrently.
+
+    The default behavior is unchanged for existing callers. Web leaderboards
+    pass max_wait to get partial results instead of blocking the HTML page
+    for a long Discord API timeout.
+    """
     bot = BOT.get("instance")
     if bot is None or bot.is_closed():
         return {}
     keys = {(int(guild_id), int(user_id)) for guild_id, user_id in member_keys}
+    if not keys:
+        return {}
 
     async def fetch_member(guild_id, user_id, semaphore):
         guild = bot.get_guild(guild_id)
@@ -2485,21 +2493,83 @@ def get_bot_members_for_display(member_keys):
             except discord.NotFound:
                 return (guild_id, user_id), None
             except Exception:
-                log.exception("Could not fetch Discord member %s in guild %s", user_id, guild_id)
+                log.warning("Could not fetch Discord member %s in guild %s", user_id, guild_id)
                 return (guild_id, user_id), None
 
     async def fetch_all():
         semaphore = asyncio.Semaphore(5)
-        return await asyncio.gather(
-            *(fetch_member(guild_id, user_id, semaphore) for guild_id, user_id in keys)
-        )
+        tasks = [
+            asyncio.create_task(fetch_member(guild_id, user_id, semaphore))
+            for guild_id, user_id in keys
+        ]
+        if max_wait is None:
+            return await asyncio.gather(*tasks)
+
+        done, pending = await asyncio.wait(tasks, timeout=max_wait)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        return [
+            task.result() for task in done
+            if not task.cancelled() and task.exception() is None
+        ]
 
     try:
-        results = _run_on_bot_loop(bot, fetch_all(), 15)
-        return dict(results)
+        timeout = 15 if max_wait is None else max_wait + 2
+        return dict(_run_on_bot_loop(bot, fetch_all(), timeout))
     except Exception:
-        log.exception("Could not load Discord members for leaderboard badge display")
+        log.warning("Discord member display lookup did not finish within its time budget")
         return {}
+
+
+# Cache recent role lookups only for the web leaderboard. Critical role grants,
+# purchases and permission checks continue to fetch current Discord state.
+_web_leaderboard_member_cache = {}
+_web_leaderboard_member_cache_lock = threading.Lock()
+
+
+def get_web_leaderboard_members(member_keys):
+    bot = BOT.get("instance")
+    if bot is None or bot.is_closed():
+        return {}
+    keys = {(int(gid), int(uid)) for gid, uid in member_keys}
+    if not keys:
+        return {}
+
+    now = time.monotonic()
+    result = {}
+    missing = []
+    with _web_leaderboard_member_cache_lock:
+        for key, (expiry, cache_bot, _) in list(_web_leaderboard_member_cache.items()):
+            if expiry <= now or cache_bot is not bot:
+                del _web_leaderboard_member_cache[key]
+
+        for guild_id, user_id in keys:
+            guild = bot.get_guild(guild_id)
+            member = guild.get_member(user_id) if guild else None
+            if member is not None:
+                result[(guild_id, user_id)] = member
+                continue
+            cached = _web_leaderboard_member_cache.get((guild_id, user_id))
+            if cached is not None:
+                if cached[2] is not None:
+                    result[(guild_id, user_id)] = cached[2]
+            else:
+                missing.append((guild_id, user_id))
+
+    if missing:
+        fetched = get_bot_members_for_display(missing, max_wait=2.0)
+        now = time.monotonic()
+        with _web_leaderboard_member_cache_lock:
+            for key in missing:
+                member = fetched.get(key)
+                # Do not repeatedly hammer Discord when lookups time out.
+                ttl = 60 if member is not None else 10
+                _web_leaderboard_member_cache[key] = (now + ttl, bot, member)
+                if member is not None:
+                    result[key] = member
+    return result
 
 
 DAILY_REWARD = 100
@@ -4302,27 +4372,30 @@ def users_page():
     if not is_admin(user["id"]):
         return "Forbidden", 403
 
-    # Users are tracked globally across every server. A record exists here
-    # whenever someone has interacted with the bot's economy features.
-    search = request.args.get("q", "").strip()
+    started = time.perf_counter()
+    # Keep the same 500 highest-balance records and top 100 global users as before.
+    # Avoid loading unrelated trivia/activity fields from large economy documents.
+    search = request.args.get("q", "").strip()[:80]
     query = {}
     if search:
+        literal_search = re.escape(search)
         terms = [
-            {"username": {"$regex": search, "$options": "i"}},
-            {"display_name": {"$regex": search, "$options": "i"}},
+            {"username": {"$regex": literal_search, "$options": "i"}},
+            {"display_name": {"$regex": literal_search, "$options": "i"}},
         ]
         if search.isdigit():
             terms.append({"user_id": int(search)})
         query["$or"] = terms
 
-    records = list(users.find(query).sort("balance", -1).limit(500))
+    records = list(users.find(
+        query,
+        {"guild_id": 1, "user_id": 1, "username": 1, "display_name": 1,
+         "balance": 1, "clan_id": 1},
+    ).sort("balance", -1).limit(500))
 
     bot = BOT.get("instance")
-    guild_names = {}
-    if bot is not None:
-        guild_names = {int(guild.id): guild.name for guild in bot.guilds}
+    guild_names = {int(guild.id): guild.name for guild in bot.guilds} if bot is not None else {}
 
-    # Group server-specific records into one global user entry.
     grouped = {}
     for record in records:
         uid = int(record.get("user_id", 0))
@@ -4344,35 +4417,70 @@ def users_page():
 
     global_users = sorted(
         grouped.values(),
-        key=lambda item: (-item["total_balance"], (item.get("display_name") or item.get("username") or "").lower())
+        key=lambda item: (
+            -item["total_balance"],
+            (item.get("display_name") or item.get("username") or "").lower(),
+        ),
     )[:100]
 
-    for entry in global_users:
-        server_ids = [int(record.get("guild_id", 0)) for record in entry["servers"] if record.get("guild_id")]
-        control_map = {
-            (int(item["guild_id"]), int(item["user_id"])): item
-            for item in member_controls.find(
-                {"user_id": entry["user_id"], "guild_id": {"$in": server_ids}}
-            )
-        }
+    # Render only one page's purchase history and administrative controls at a
+    # time; loading 100 users with inventories can make a very large HTML page.
+    page_size = 20
+    total_entries = len(global_users)
+    total_pages = max(1, (total_entries + page_size - 1) // page_size)
+    page = request.args.get("page", default=1, type=int) or 1
+    page = max(1, min(page, total_pages))
+    visible_users = global_users[(page - 1) * page_size:page * page_size]
+    visible_records = [record for entry in visible_users for record in entry["servers"]]
+
+    # Large inventories can make economy documents expensive to transfer.
+    # Read them only for the records actually displayed on this page, using
+    # MongoDB's indexed _id values so no other guild's history is mixed in.
+    visible_record_ids = [record["_id"] for record in visible_records if "_id" in record]
+    inventory_by_id = {
+        record["_id"]: record.get("inventory", []) or []
+        for record in users.find(
+            {"_id": {"$in": visible_record_ids}}, {"inventory": 1}
+        )
+    } if visible_record_ids else {}
+
+    # N+1 fix: fetch restrictions and active clans ONCE for visible users,
+    # rather than up to three separate Mongo queries for every server record.
+    guild_ids = {int(record.get("guild_id", 0)) for record in visible_records}
+    user_ids = {int(entry["user_id"]) for entry in visible_users}
+    control_map = {}
+    clans_by_guild = {}
+    clans_by_key = {}
+    if guild_ids and user_ids:
+        for item in member_controls.find(
+            {"guild_id": {"$in": list(guild_ids)}, "user_id": {"$in": list(user_ids)}},
+            {"guild_id": 1, "user_id": 1, "blocked_from_candy": 1, "leaderboard_excluded": 1},
+        ):
+            control_map[(int(item["guild_id"]), int(item["user_id"]))] = item
+
+        for clan in clans.find(
+            {"guild_id": {"$in": list(guild_ids)}, "status": "active"},
+            {"guild_id": 1, "clan_id": 1, "name": 1},
+        ).sort("name", 1):
+            guild_id = int(clan["guild_id"])
+            clans_by_guild.setdefault(guild_id, []).append(clan)
+            clans_by_key[(guild_id, str(clan.get("clan_id")))] = clan
+
+    for entry in visible_users:
+        uid = int(entry["user_id"])
         for record in entry["servers"]:
-            control = control_map.get(
-                (int(record.get("guild_id", 0)), entry["user_id"]), {}
-            )
+            guild_id = int(record.get("guild_id", 0))
+            control = control_map.get((guild_id, uid), {})
             record["blocked_from_candy"] = bool(control.get("blocked_from_candy", False))
             record["leaderboard_excluded"] = bool(control.get("leaderboard_excluded", False))
             current_clan_id = record.get("clan_id")
-            record["clan"] = clans.find_one({
-                "guild_id": int(record.get("guild_id", 0)),
-                "clan_id": current_clan_id,
-                "status": "active",
-            }) if current_clan_id else None
-            record["available_clans"] = list(clans.find(
-                {"guild_id": int(record.get("guild_id", 0)), "status": "active"},
-                {"clan_id": 1, "name": 1},
-            ).sort("name", 1))
+            record["clan"] = (
+                clans_by_key.get((guild_id, str(current_clan_id)))
+                if current_clan_id else None
+            )
+            record["available_clans"] = clans_by_guild.get(guild_id, [])
             record["purchases"] = []
-            for purchase in record.get("inventory", []) or []:
+            for purchase in inventory_by_id.get(record.get("_id"), []):
                 if not isinstance(purchase, dict):
                     continue
                 purchase = dict(purchase)
@@ -4383,12 +4491,20 @@ def users_page():
                 )
                 record["purchases"].append(purchase)
 
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if elapsed_ms > 750:
+        log.info("/users rendered in %.0f ms (page %d/%d, %d entries, %d rows)",
+                 elapsed_ms, page, total_pages, len(visible_users), len(visible_records))
     return render_template(
         "users.html",
         user=user,
         avatar_url=discord_avatar_url(user),
         search=search,
-        users=global_users,
+        users=visible_users,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+        total_entries=total_entries,
     )
 
 
@@ -4438,14 +4554,14 @@ def users_candy():
                 return_document=ReturnDocument.AFTER,
             )
             if result is None:
-                return redirect(url_for("users_page", q=request.form.get("q", ""), error="subtract"))
+                return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="subtract"))
         log_activity("admin_add" if action == "add" else "admin_subtract",
                      user_id=member_id, guild_id=guild_id, amount=amount,
                      details={"changed_by": user["id"], "source": "web_users"})
         notify_candy_change_from_web(guild_id, member_id, action, amount, result["balance"], user)
-        return redirect(url_for("users_page", q=request.form.get("q", ""), saved=action))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), saved=action))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="invalid"))
 
 
 @app.post("/users/clan")
@@ -4495,8 +4611,8 @@ def users_clan():
             },
         )
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=search, error="clan"))
-    return redirect(url_for("users_page", q=search, saved=saved))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="clan"))
+    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), saved=saved))
 
 
 @app.post("/users/purchase/remove")
@@ -4523,7 +4639,7 @@ def users_purchase_remove():
                 "purchased_at": datetime.fromtimestamp(purchased_at_ms / 1000, timezone.utc),
             }
     except (TypeError, ValueError, OverflowError):
-        return redirect(url_for("users_page", q=search, error="invalid"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="invalid"))
 
     member_record = users.find_one({"guild_id": guild_id, "user_id": member_id})
     if purchase_id:
@@ -4542,11 +4658,11 @@ def users_purchase_remove():
             None,
         )
     if purchase is None:
-        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_missing"))
 
     price = int(purchase.get("price", 0) or 0)
     if price < 0:
-        return redirect(url_for("users_page", q=search, error="invalid"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="invalid"))
 
     role_id = purchase.get("role_id")
     if purchase.get("type") == "role" and not role_id:
@@ -4556,7 +4672,7 @@ def users_purchase_remove():
         bot = BOT.get("instance")
         guild = bot.get_guild(guild_id) if bot and not bot.is_closed() else None
         if guild is None:
-            return redirect(url_for("users_page", q=search, error="purchase_role_offline"))
+            return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_offline"))
         role = guild.get_role(int(role_id))
         if role is not None:
             try:
@@ -4568,7 +4684,7 @@ def users_purchase_remove():
                     "Could not fetch member %s in guild %s before removing shop purchase %s.",
                     member_id, guild_id, purchase.get("purchase_id", item_id),
                 )
-                return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+                return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_remove"))
             if member is not None and role in member.roles:
                 try:
                     _run_on_bot_loop(
@@ -4586,7 +4702,7 @@ def users_purchase_remove():
                         "Could not revoke shop role %s from member %s in guild %s while removing purchase %s.",
                         role_id, member_id, guild_id, purchase.get("purchase_id", item_id),
                     )
-                    return redirect(url_for("users_page", q=search, error="purchase_role_remove"))
+                    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_role_remove"))
 
     update = {"$pull": {"inventory": purchase_match}}
     if refund == "1":
@@ -4597,7 +4713,7 @@ def users_purchase_remove():
         return_document=ReturnDocument.AFTER,
     )
     if updated is None:
-        return redirect(url_for("users_page", q=search, error="purchase_missing"))
+        return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), error="purchase_missing"))
 
     log_activity(
         "shop_purchase_removed",
@@ -4615,7 +4731,7 @@ def users_purchase_remove():
     )
     if refund == "1" and price:
         notify_candy_change_from_web(guild_id, member_id, "add", price, updated["balance"], user)
-    return redirect(url_for("users_page", q=search, saved="purchase_refunded" if refund == "1" else "purchase_removed"))
+    return redirect(url_for("users_page", q=search, page=request.form.get("page", 1), saved="purchase_refunded" if refund == "1" else "purchase_removed"))
 
 
 @app.post("/users/control")
@@ -4633,9 +4749,9 @@ def users_control():
         set_member_control(guild_id, member_id, field, enabled, user["id"])
         log_activity("member_control", user_id=member_id, guild_id=guild_id,
                      details={"control": field, "enabled": enabled, "source": "web_users", "changed_by": user["id"]})
-        return redirect(url_for("users_page", q=request.form.get("q", ""), saved="control"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), saved="control"))
     except (TypeError, ValueError):
-        return redirect(url_for("users_page", q=request.form.get("q", ""), error="invalid"))
+        return redirect(url_for("users_page", q=request.form.get("q", ""), page=request.form.get("page", 1), error="invalid"))
 
 
 @app.get("/access-control")
@@ -5443,6 +5559,7 @@ def daily_claim():
 
 @app.get("/leaderboard")
 def leaderboard_page():
+    started = time.perf_counter()
     try:
         excluded_pairs = {
             (int(record["guild_id"]), int(record["user_id"]))
@@ -5450,66 +5567,78 @@ def leaderboard_page():
                 {"leaderboard_excluded": True}, {"guild_id": 1, "user_id": 1}
             )
         }
-        candidates = list(users.find({}).sort("balance", -1).limit(200))
-        top_users = [doc for doc in candidates if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs][:25]
-        discord_bot = BOT["instance"]
-        leaderboard = []
+        # Fetch only what this page displays, not entire economy inventories.
+        candidates = list(users.find(
+            {},
+            {"guild_id": 1, "user_id": 1, "balance": 1,
+             "username": 1, "display_name": 1},
+        ).sort("balance", -1).limit(200))
+        top_users = [
+            doc for doc in candidates
+            if (int(doc.get("guild_id", 0)), int(doc.get("user_id", 0))) not in excluded_pairs
+        ][:25]
+
+        discord_bot = BOT.get("instance")
         badge_configs_by_guild = {}
         badge_member_keys = []
+        preference_pairs = []
         for doc in top_users:
             guild_id = int(doc.get("guild_id", 0))
+            user_id = doc.get("user_id")
             if guild_id not in badge_configs_by_guild:
                 badge_configs_by_guild[guild_id] = get_badge_configs(guild_id)
-            if (any(config["target_type"] == "role" for config in badge_configs_by_guild[guild_id])
-                    and doc.get("user_id") is not None):
-                badge_member_keys.append((guild_id, doc["user_id"]))
-        badge_members = get_bot_members_for_display(badge_member_keys)
+            configs = badge_configs_by_guild[guild_id]
+            if user_id is not None and configs:
+                preference_pairs.append((guild_id, int(user_id)))
+                if any(config["target_type"] == "role" for config in configs):
+                    badge_member_keys.append((guild_id, int(user_id)))
+
+        # Bounded best-effort role enrichment: an API slowdown cannot hold up the
+        # leaderboard indefinitely, and successful lookups are briefly cached.
+        badge_members = get_web_leaderboard_members(badge_member_keys)
+
+        # One preference query for the entire leaderboard, instead of one per row.
+        badge_preferences = {}
+        if preference_pairs:
+            guild_ids = sorted({pair[0] for pair in preference_pairs})
+            user_ids = sorted({pair[1] for pair in preference_pairs})
+            for preference in member_badge_preferences.find(
+                {"guild_id": {"$in": guild_ids}, "user_id": {"$in": user_ids}},
+                {"guild_id": 1, "user_id": 1, "target": 1},
+            ):
+                badge_preferences[(int(preference["guild_id"]),
+                                   int(preference["user_id"]))] = preference.get("target")
+
+        leaderboard = []
         for doc in top_users:
             user_id = doc.get("user_id")
             guild_id = int(doc.get("guild_id", 0))
-            discord_user = discord_bot.get_user(user_id) if discord_bot else None
+            discord_user = (
+                discord_bot.get_user(int(user_id))
+                if discord_bot and user_id is not None else None
+            )
+            member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
 
-            # Existing MongoDB records may not have a stored username yet.            # If the user is not cached, fetch their Discord account directly
-            # through the bot's running event loop instead of showing the ID.
-            if discord_user is None and discord_bot and not discord_bot.is_closed():
-                try:
-                    future = asyncio.run_coroutine_threadsafe(
-                        discord_bot.fetch_user(user_id),
-                        discord_bot.loop,
-                    )
-                    discord_user = future.result(timeout=5)
-                    if discord_user:
-                        users.update_one(
-                            {"guild_id": doc.get("guild_id"), "user_id": user_id},
-                            {"$set": {
-                                "username": discord_user.name,
-                                "display_name": discord_user.display_name,
-                            }},
-                        )
-                except Exception:
-                    log.exception("Could not fetch Discord profile for %s", user_id)
-
-
+            # Never block a web request on individual Discord profile REST calls.
+            # Most records already include the username from economy interactions.
+            saved_name = doc.get("username")
             name = (
-                f"@{doc.get('username')}"
-                if doc.get("username")
-                else (f"@{discord_user.name}" if discord_user else "@Unknown User")
+                f"@{saved_name}" if saved_name
+                else f"@{discord_user.name}" if discord_user
+                else f"@{member.name}" if member
+                else f"@{user_id}" if user_id is not None else "@Unknown User"
             )
             avatar_url = None
-            if discord_user:
+            source = discord_user or member
+            if source is not None:
                 try:
-                    avatar_url = str(discord_user.display_avatar.url)
+                    avatar_url = str(source.display_avatar.url)
                 except Exception:
-                    avatar_url = None
+                    pass
 
-            badge_configs = badge_configs_by_guild[guild_id]
-            member = badge_members.get((guild_id, int(user_id))) if user_id is not None else None
-            preferred_badge = (
-                get_member_badge_preference(guild_id, user_id)
-                if user_id is not None else None
-            )
             badges, name_gradient, _, _ = badge_presentation_for_member(
-                user_id, member, badge_configs, preferred_badge
+                user_id, member, badge_configs_by_guild[guild_id],
+                badge_preferences.get((guild_id, int(user_id))) if user_id is not None else None,
             )
             leaderboard.append({
                 "name": name,
@@ -5522,7 +5651,12 @@ def leaderboard_page():
     except PyMongoError:
         log.exception("Leaderboard could not reach MongoDB")
         leaderboard, db_ok = [], False
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if elapsed_ms > 750:
+        log.info("/leaderboard loaded in %.0f ms (%d entries)",
+                 elapsed_ms, len(leaderboard))
     return render_template("leaderboard.html", leaderboard=leaderboard, db_ok=db_ok)
+
 
 @app.get("/status")
 def status_page():
@@ -7427,10 +7561,36 @@ async def setup_bot(bot):
             log.info(f"Synced {len(synced)} application command(s).")
 
 
+def ensure_dashboard_indexes():
+    """Create non-unique indexes used by the busy dashboard pages.
+
+    Keep this best-effort: a free MongoDB tier or restricted database account
+    must not prevent the bot from starting if index creation is unavailable.
+    """
+    indexes = [
+        (users, [("balance", -1)], "dashboard_balance_desc"),
+        (users, [("guild_id", 1), ("balance", -1)], "dashboard_guild_balance_desc"),
+        (users, [("guild_id", 1), ("user_id", 1)], "dashboard_guild_user"),
+        (member_controls, [("leaderboard_excluded", 1)], "dashboard_leaderboard_excluded"),
+        (member_controls, [("guild_id", 1), ("user_id", 1)], "dashboard_member_controls"),
+        (clans, [("guild_id", 1), ("status", 1), ("name", 1)], "dashboard_active_clans"),
+        (member_badge_preferences, [("guild_id", 1), ("user_id", 1)], "dashboard_badge_preference"),
+        (presentation_settings, [("guild_id", 1)], "dashboard_presentation_settings"),
+    ]
+    for collection, fields, name in indexes:
+        try:
+            collection.create_index(fields, name=name, background=True)
+        except PyMongoError as exc:
+            log.warning("Could not ensure MongoDB index %s: %s", name, exc.__class__.__name__)
+    log.info("Dashboard index check completed")
+
+
 async def check_database():
     try:
         await db(mongo.admin.command, "ping")
         log.info("MongoDB connection OK.")
+        # Index creation is best-effort and should not delay Discord startup.
+        threading.Thread(target=ensure_dashboard_indexes, daemon=True).start()
     except PyMongoError as exc:
         log.error(
             "MongoDB check FAILED (%s). Commands will not work until MONGODB_URI "
